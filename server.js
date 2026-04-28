@@ -4,7 +4,7 @@ const cors = require('cors');
 
 const app = express();
 
-app.use(cors({ origin: 'https://speedybanner.com' }));
+app.use(cors({ origin: ['https://speedybanner.com', 'https://www.speedybanner.com'] }));
 
 // Stripe webhooks need raw body — must come BEFORE express.json()
 app.use('/webhook', express.raw({ type: 'application/json' }));

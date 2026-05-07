@@ -1,6 +1,5 @@
 const express = require('express');
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
-const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { v4: uuidv4 } = require('uuid');
 
 const router = express.Router();
@@ -14,34 +13,51 @@ const r2 = new S3Client({
   },
 });
 
-// POST /upload/presign
-// Body: { filename, contentType }
-// Returns: { uploadUrl, fileKey, publicUrl }
-router.post('/presign', async (req, res) => {
-  const { filename, contentType } = req.body;
+// POST /upload/file
+// Headers: Content-Type (file mime type), X-Filename (original filename)
+// Body: raw file bytes (up to 50 MB)
+// Returns: { fileKey, publicUrl }
+router.post('/file',
+  express.raw({ type: '*/*', limit: '50mb' }),
+  async (req, res) => {
+    const originalName = req.headers['x-filename'] || 'upload.bin';
+    const contentType  = req.headers['content-type'] || 'application/octet-stream';
+    const ext = originalName.split('.').pop().toLowerCase().replace(/[^a-z0-9]/g, '') || 'bin';
+    const fileKey = `uploads/${uuidv4()}.${ext}`;
 
-  if (!filename || !contentType) {
-    return res.status(400).json({ error: 'filename and contentType are required' });
+    try {
+      await r2.send(new PutObjectCommand({
+        Bucket: process.env.R2_BUCKET_NAME,
+        Key: fileKey,
+        ContentType: contentType,
+        Body: req.body,
+        Metadata: { originalName },
+      }));
+
+      const publicUrl = `${process.env.R2_PUBLIC_URL}/${fileKey}`;
+      res.json({ fileKey, publicUrl });
+    } catch (err) {
+      console.error('R2 upload error:', err);
+      res.status(500).json({ error: 'Upload failed' });
+    }
   }
+);
 
-  const ext = filename.split('.').pop();
-  const fileKey = `uploads/${uuidv4()}.${ext}`;
-
-  try {
-    const command = new PutObjectCommand({
-      Bucket: process.env.R2_BUCKET_NAME,
-      Key: fileKey,
-      ContentType: contentType,
-    });
-
-    const uploadUrl = await getSignedUrl(r2, command, { expiresIn: 300 });
-    const publicUrl = `${process.env.R2_PUBLIC_URL}/${fileKey}`;
-
-    res.json({ uploadUrl, fileKey, publicUrl });
-  } catch (err) {
-    console.error('R2 presign error:', err);
-    res.status(500).json({ error: 'Failed to generate upload URL' });
-  }
-});
+// Internal helper used by webhook — fetch file bytes from R2
+async function fetchFileFromR2(fileKey) {
+  const cmd = new GetObjectCommand({
+    Bucket: process.env.R2_BUCKET_NAME,
+    Key: fileKey,
+  });
+  const response = await r2.send(cmd);
+  const chunks = [];
+  for await (const chunk of response.Body) chunks.push(chunk);
+  return {
+    buffer: Buffer.concat(chunks),
+    contentType: response.ContentType || 'application/octet-stream',
+    originalName: response.Metadata?.originalname || fileKey.split('/').pop(),
+  };
+}
 
 module.exports = router;
+module.exports.fetchFileFromR2 = fetchFileFromR2;

@@ -216,3 +216,5 @@ function buildAdminEmail(order) {
 }
 
 module.exports = router;
+module.exports.buildCustomerEmail = buildCustomerEmail;
+module.exports.buildAdminEmail = buildAdminEmail;

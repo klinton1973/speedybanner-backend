@@ -36,6 +36,9 @@ const PRICES = {
 router.post('/create-payment-intent', async (req, res) => {
   const { items, customerEmail, shippingAddress, fileKey, discountCents = 0 } = req.body;
 
+  console.log(`[checkout] request from ${customerEmail}, items: ${items?.length}, discountCents: ${discountCents}`);
+  console.log(`[checkout] SUPABASE_URL starts with: ${(process.env.SUPABASE_URL || '').slice(0, 40)}`);
+
   if (!items || !Array.isArray(items) || items.length === 0 || !customerEmail) {
     return res.status(400).json({ error: 'items and customerEmail are required' });
   }
@@ -73,7 +76,8 @@ router.post('/create-payment-intent', async (req, res) => {
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) { console.error('[checkout] free order insert error:', JSON.stringify(error)); throw error; }
+      console.log(`[checkout] free order saved: ${order.id}`);
 
       // Send emails immediately (no webhook needed for free orders)
       await sendOrderEmails(order);
@@ -104,7 +108,8 @@ router.post('/create-payment-intent', async (req, res) => {
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) { console.error('[checkout] paid order insert error:', JSON.stringify(error)); throw error; }
+    console.log(`[checkout] paid order saved: ${order.id}`);
 
     await stripe.paymentIntents.update(paymentIntent.id, {
       metadata: { customerEmail, orderId: order.id },
@@ -112,8 +117,9 @@ router.post('/create-payment-intent', async (req, res) => {
 
     res.json({ clientSecret: paymentIntent.client_secret, orderId: order.id });
   } catch (err) {
-    console.error('Checkout error:', err);
-    res.status(500).json({ error: 'Failed to create payment intent' });
+    console.error('[checkout] ERROR:', err?.message || err);
+    console.error('[checkout] ERROR detail:', JSON.stringify(err));
+    res.status(500).json({ error: err?.message || 'Failed to create payment intent' });
   }
 });
 

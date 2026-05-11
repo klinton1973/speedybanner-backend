@@ -69,7 +69,6 @@ router.post('/create-payment-intent', async (req, res) => {
           items,
           file_key: fileKey || null,
           amount_cents: 0,
-          discount_cents: discount,
           status: 'paid',
           paid_at: new Date().toISOString(),
         })
@@ -102,7 +101,6 @@ router.post('/create-payment-intent', async (req, res) => {
         items,
         file_key: fileKey || null,
         amount_cents: amount,
-        discount_cents: discount,
         status: 'pending',
       })
       .select()

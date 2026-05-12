@@ -137,7 +137,7 @@ function buildCustomerEmail(order) {
           Visit <a href="https://speedybanner.com" style="color:#1a3fa8">speedybanner.com</a> and use the Upload File button, or simply reply to this email and attach your file.
         </div>
 
-        <p style="color:#6b7280;font-size:13px;margin:0">Questions? Call <a href="tel:+18592306969" style="color:#1a3fa8">(859) 230-6969</a> or reply to this email.</p>
+        <p style="color:#6b7280;font-size:13px;margin:0">Questions? Call <a href="tel:+13474226637" style="color:#1a3fa8">(347) 422-6637</a> or reply to this email.</p>
       </div>
       <div style="background:#f8fafc;padding:16px 32px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px;text-align:center;font-size:12px;color:#9ca3af">
         © SpeedyBanner.com · Free Overnight Shipping on Every Order

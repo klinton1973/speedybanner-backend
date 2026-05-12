@@ -25,6 +25,7 @@ router.post('/file',
     const ext = originalName.split('.').pop().toLowerCase().replace(/[^a-z0-9]/g, '') || 'bin';
     const fileKey = `uploads/${uuidv4()}.${ext}`;
 
+    console.log(`[upload] ${originalName} — ${contentType} — ${req.body?.length ?? 0} bytes — key: ${fileKey}`);
     try {
       await r2.send(new PutObjectCommand({
         Bucket: process.env.R2_BUCKET_NAME,
@@ -35,10 +36,12 @@ router.post('/file',
       }));
 
       const publicUrl = `${process.env.R2_PUBLIC_URL}/${fileKey}`;
+      console.log(`[upload] success: ${publicUrl}`);
       res.json({ fileKey, publicUrl });
     } catch (err) {
-      console.error('R2 upload error:', err);
-      res.status(500).json({ error: 'Upload failed' });
+      console.error('[upload] R2 error:', err?.message || err);
+      console.error('[upload] R2 error detail:', JSON.stringify(err));
+      res.status(500).json({ error: 'Upload failed', detail: err?.message });
     }
   }
 );

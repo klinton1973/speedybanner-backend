@@ -3,6 +3,7 @@ const Stripe = require('stripe');
 const { createClient } = require('@supabase/supabase-js');
 const { Resend } = require('resend');
 const { fetchFileFromR2 } = require('./upload');
+const { siteNameFromOrigin } = require('../sites');
 
 const router = express.Router();
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
@@ -35,9 +36,9 @@ const PRICES = {
 //          { free: true, orderId }   for $0 coupon orders
 router.post('/create-payment-intent', async (req, res) => {
   const { items, customerEmail, shippingAddress, fileKey, discountCents = 0 } = req.body;
+  const site = siteNameFromOrigin(req.headers.origin);
 
-  console.log(`[checkout] request from ${customerEmail}, items: ${items?.length}, discountCents: ${discountCents}`);
-  console.log(`[checkout] SUPABASE_URL starts with: ${(process.env.SUPABASE_URL || '').slice(0, 40)}`);
+  console.log(`[checkout] request from ${customerEmail} on ${site}, items: ${items?.length}, discountCents: ${discountCents}`);
 
   if (!items || !Array.isArray(items) || items.length === 0 || !customerEmail) {
     return res.status(400).json({ error: 'items and customerEmail are required' });
@@ -71,6 +72,7 @@ router.post('/create-payment-intent', async (req, res) => {
           amount_cents: 0,
           status: 'paid',
           paid_at: new Date().toISOString(),
+          site,
         })
         .select()
         .single();
@@ -102,6 +104,7 @@ router.post('/create-payment-intent', async (req, res) => {
         file_key: fileKey || null,
         amount_cents: amount,
         status: 'pending',
+        site,
       })
       .select()
       .single();
@@ -127,9 +130,9 @@ async function sendOrderEmails(order) {
     const { buildCustomerEmail, buildAdminEmail } = require('./webhook');
 
     await resend.emails.send({
-      from: 'SpeedyBanner <orders@speedybanner.com>',
+      from: `${order.site || 'SpeedyBanner'} <orders@speedybanner.com>`,
       to: order.customer_email,
-      subject: `Order Confirmed — SpeedyBanner #${order.id}`,
+      subject: `Order Confirmed — ${order.site || 'SpeedyBanner'} #${order.id}`,
       html: buildCustomerEmail(order),
     });
 
@@ -149,7 +152,7 @@ async function sendOrderEmails(order) {
       await resend.emails.send({
         from: 'SpeedyBanner Orders <orders@speedybanner.com>',
         to: notifyTo,
-        subject: `🖨️ NEW ORDER #${order.id} — FREE (coupon) — ${order.customer_email}`,
+        subject: `🖨️ NEW ORDER #${order.id} — [${order.site || 'SpeedyBanner'}] — FREE (coupon) — ${order.customer_email}`,
         html: buildAdminEmail(order),
         attachments,
       });

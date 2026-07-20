@@ -2,15 +2,11 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 
+const { allowedOrigins } = require('./sites');
+
 const app = express();
 
-app.use(cors());
-
-// Log every incoming request so we can see if Railway receives anything
-app.use((req, res, next) => {
-  console.log(`[req] ${req.method} ${req.path} origin:${req.headers.origin || 'none'}`);
-  next();
-});
+app.use(cors({ origin: allowedOrigins }));
 
 // Stripe webhooks need raw body — must come BEFORE express.json()
 app.use('/webhook', express.raw({ type: 'application/json' }));

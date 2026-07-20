@@ -38,9 +38,9 @@ router.post('/', async (req, res) => {
 
       // Confirmation email to customer
       await resend.emails.send({
-        from: 'SpeedyBanner <orders@speedybanner.com>',
+        from: `${order.site || 'SpeedyBanner'} <orders@speedybanner.com>`,
         to: customerEmail,
-        subject: `Order Confirmed — SpeedyBanner #${order.id}`,
+        subject: `Order Confirmed — ${order.site || 'SpeedyBanner'} #${order.id}`,
         html: buildCustomerEmail(order),
       });
 
@@ -69,7 +69,7 @@ router.post('/', async (req, res) => {
         await resend.emails.send({
           from: 'SpeedyBanner Orders <orders@speedybanner.com>',
           to: notifyTo,
-          subject: `🖨️ NEW ORDER #${order.id} — $${(order.amount_cents / 100).toFixed(2)} — ${order.customer_email}`,
+          subject: `🖨️ NEW ORDER #${order.id} — [${order.site || 'SpeedyBanner'}] — $${(order.amount_cents / 100).toFixed(2)} — ${order.customer_email}`,
           html: buildAdminEmail(order),
           attachments,
         });
@@ -96,7 +96,7 @@ function buildCustomerEmail(order) {
   return `
     <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#1a1a2e">
       <div style="background:#1a3fa8;padding:28px 32px;border-radius:8px 8px 0 0;text-align:center">
-        <h1 style="color:#fbbf24;margin:0;font-size:26px;letter-spacing:1px">SpeedyBanner.com</h1>
+        <h1 style="color:#fbbf24;margin:0;font-size:26px;letter-spacing:1px">${order.site || 'SpeedyBanner.com'}</h1>
         <p style="color:rgba(255,255,255,.85);margin:6px 0 0;font-size:14px">Banners · Signs · Overnight Shipping</p>
       </div>
       <div style="background:#fff;padding:32px;border:1px solid #e5e7eb;border-top:none">
@@ -134,7 +134,7 @@ function buildCustomerEmail(order) {
 
         <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:14px 18px;margin-bottom:24px;font-size:13px">
           <strong>🎨 Need to upload your design file?</strong><br>
-          Visit <a href="https://speedybanner.com" style="color:#1a3fa8">speedybanner.com</a> and use the Upload File button, or simply reply to this email and attach your file.
+          Visit <a href="https://${(order.site || 'SpeedyBanner.com').toLowerCase()}" style="color:#1a3fa8">${order.site || 'speedybanner.com'}</a> and use the Upload File button, or simply reply to this email and attach your file.
         </div>
 
         <p style="color:#6b7280;font-size:13px;margin:0">Questions? Call <a href="tel:+13474226637" style="color:#1a3fa8">(347) 422-6637</a> or reply to this email.</p>
@@ -174,6 +174,10 @@ function buildAdminEmail(order) {
       <div style="background:#fff;padding:28px;border:1px solid #e5e7eb;border-top:none">
 
         <div style="display:flex;gap:20px;margin-bottom:24px;flex-wrap:wrap">
+          <div style="flex:1;min-width:200px;background:#fef3cd;border-radius:6px;padding:14px 18px">
+            <div style="font-size:11px;color:#92400e;text-transform:uppercase;font-weight:700;margin-bottom:6px">Site</div>
+            <div style="font-weight:700;font-size:15px;color:#92400e">${order.site || 'SpeedyBanner.com'}</div>
+          </div>
           <div style="flex:1;min-width:200px;background:#f8fafc;border-radius:6px;padding:14px 18px">
             <div style="font-size:11px;color:#6b7280;text-transform:uppercase;font-weight:700;margin-bottom:6px">Customer</div>
             <div style="font-weight:700;font-size:15px">${addr.name || 'N/A'}</div>

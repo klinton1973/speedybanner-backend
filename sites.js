@@ -10,6 +10,8 @@ const SITES = {
   'www.lexingtonsign.com':    'LexingtonSign.com',
   'anysizebanner.com':        'AnySizeBanner.com',
   'www.anysizebanner.com':    'AnySizeBanner.com',
+  'holyprinter.com':          'HolyPrinter.com',
+  'www.holyprinter.com':      'HolyPrinter.com',
 };
 
 const DEFAULT_SITE = 'SpeedyBanner.com';

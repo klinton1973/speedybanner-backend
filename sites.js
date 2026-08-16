@@ -12,6 +12,8 @@ const SITES = {
   'www.anysizebanner.com':    'AnySizeBanner.com',
   'holyprinter.com':          'HolyPrinter.com',
   'www.holyprinter.com':      'HolyPrinter.com',
+    'varsitybanner.com': 'VarsityBanner.com',
+    'www.varsitybanner.com': 'VarsityBanner.com',
 };
 
 const DEFAULT_SITE = 'SpeedyBanner.com';

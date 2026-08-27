@@ -2,7 +2,6 @@ const express = require('express');
 const Stripe = require('stripe');
 const { createClient } = require('@supabase/supabase-js');
 const { Resend } = require('resend');
-const { fetchFileFromR2 } = require('./upload');
 const { siteNameFromOrigin } = require('../sites');
 
 const router = express.Router();
@@ -127,7 +126,7 @@ router.post('/create-payment-intent', async (req, res) => {
 // Shared email sending used by free orders (paid orders use the webhook)
 async function sendOrderEmails(order) {
   try {
-    const { buildCustomerEmail, buildAdminEmail } = require('./webhook');
+    const { buildCustomerEmail, buildAdminEmail, buildAttachmentsForOrder } = require('./webhook');
 
     await resend.emails.send({
       from: `${order.site || 'SpeedyBanner'} <orders@speedybanner.com>`,
@@ -138,17 +137,7 @@ async function sendOrderEmails(order) {
 
     const notifyTo = process.env.NOTIFY_EMAIL;
     if (notifyTo) {
-      const attachments = [];
-      if (order.file_key) {
-        try {
-          const file = await fetchFileFromR2(order.file_key);
-          if (file.buffer.length <= 25 * 1024 * 1024) {
-            attachments.push({ filename: file.originalName, content: file.buffer });
-          }
-        } catch (e) {
-          console.error('File attach error:', e.message);
-        }
-      }
+      const attachments = await buildAttachmentsForOrder(order);
       await resend.emails.send({
         from: 'SpeedyBanner Orders <orders@speedybanner.com>',
         to: notifyTo,

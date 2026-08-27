@@ -47,24 +47,7 @@ router.post('/', async (req, res) => {
       // Internal print/work order notification
       const notifyTo = process.env.NOTIFY_EMAIL;
       if (notifyTo) {
-        // Try to attach the design file if one was uploaded
-        const attachments = [];
-        if (order.file_key) {
-          try {
-            const file = await fetchFileFromR2(order.file_key);
-            const MAX_ATTACH = 25 * 1024 * 1024; // 25 MB
-            if (file.buffer.length <= MAX_ATTACH) {
-              attachments.push({
-                filename: file.originalName,
-                content: file.buffer,
-              });
-            } else {
-              console.log(`File ${order.file_key} is ${file.buffer.length} bytes — too large to attach, link included in email`);
-            }
-          } catch (fileErr) {
-            console.error('Could not fetch file for attachment:', fileErr.message);
-          }
-        }
+        const attachments = await buildAttachmentsForOrder(order);
 
         await resend.emails.send({
           from: 'SpeedyBanner Orders <orders@speedybanner.com>',
@@ -82,6 +65,33 @@ router.post('/', async (req, res) => {
 
   res.json({ received: true });
 });
+
+// Collects every distinct fileKey across the order's line items (plus the legacy
+// top-level file_key, for orders placed before per-item fileKey was sent) and
+// fetches each from R2 as a separate email attachment.
+async function buildAttachmentsForOrder(order) {
+  const keys = [];
+  for (const item of order.items || []) {
+    if (item.fileKey && !keys.includes(item.fileKey)) keys.push(item.fileKey);
+  }
+  if (order.file_key && !keys.includes(order.file_key)) keys.push(order.file_key);
+
+  const MAX_ATTACH = 25 * 1024 * 1024; // 25 MB per file
+  const attachments = [];
+  for (const key of keys) {
+    try {
+      const file = await fetchFileFromR2(key);
+      if (file.buffer.length <= MAX_ATTACH) {
+        attachments.push({ filename: file.originalName, content: file.buffer });
+      } else {
+        console.log(`File ${key} is ${file.buffer.length} bytes — too large to attach, link included in email`);
+      }
+    } catch (fileErr) {
+      console.error(`Could not fetch file ${key} for attachment:`, fileErr.message);
+    }
+  }
+  return attachments;
+}
 
 function buildCustomerEmail(order) {
   const addr = order.shipping_address || {};
@@ -146,6 +156,32 @@ function buildCustomerEmail(order) {
   `;
 }
 
+// Shows a design-file link per line item when items carry their own fileKey,
+// falling back to the legacy single order.file_key for older orders.
+function buildFileSection(order) {
+  const items = order.items || [];
+  const perItem = items.filter(i => i.fileKey);
+
+  if (perItem.length > 0) {
+    const rows = items.map((i, idx) => i.fileKey
+      ? `<div style="margin-bottom:6px"><strong>${idx + 1}. ${i.name}:</strong> <a href="${process.env.R2_PUBLIC_URL}/${i.fileKey}" style="color:#1a3fa8;word-break:break-all">${process.env.R2_PUBLIC_URL}/${i.fileKey}</a></div>`
+      : `<div style="margin-bottom:6px;color:#dc2626"><strong>${idx + 1}. ${i.name}:</strong> ⚠️ No design file uploaded</div>`
+    ).join('');
+    return `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:14px 18px;margin-bottom:20px">
+        <strong>📎 Design Files:</strong><br>${rows}
+      </div>`;
+  }
+
+  return order.file_key
+    ? `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:14px 18px;margin-bottom:20px">
+        <strong>📎 Design File:</strong><br>
+        <a href="${process.env.R2_PUBLIC_URL}/${order.file_key}" style="color:#1a3fa8;word-break:break-all">${process.env.R2_PUBLIC_URL}/${order.file_key}</a>
+      </div>`
+    : `<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:14px 18px;margin-bottom:20px">
+        ⚠️ <strong>No design file uploaded.</strong> Contact customer before printing.
+      </div>`;
+}
+
 function buildAdminEmail(order) {
   const addr = order.shipping_address || {};
   const items = (order.items || [])
@@ -156,14 +192,7 @@ function buildAdminEmail(order) {
     </tr>`)
     .join('');
 
-  const fileSection = order.file_key
-    ? `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:14px 18px;margin-bottom:20px">
-        <strong>📎 Design File:</strong><br>
-        <a href="${process.env.R2_PUBLIC_URL}/${order.file_key}" style="color:#1a3fa8;word-break:break-all">${process.env.R2_PUBLIC_URL}/${order.file_key}</a>
-      </div>`
-    : `<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:14px 18px;margin-bottom:20px">
-        ⚠️ <strong>No design file uploaded.</strong> Contact customer before printing.
-      </div>`;
+  const fileSection = buildFileSection(order);
 
   return `
     <div style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;color:#1a1a2e">
@@ -222,3 +251,4 @@ function buildAdminEmail(order) {
 module.exports = router;
 module.exports.buildCustomerEmail = buildCustomerEmail;
 module.exports.buildAdminEmail = buildAdminEmail;
+module.exports.buildAttachmentsForOrder = buildAttachmentsForOrder;

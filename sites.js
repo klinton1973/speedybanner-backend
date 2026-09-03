@@ -8,6 +8,8 @@ const SITES = {
   'www.1hourbanner.com':      '1HourBanner.com',
   'lexingtonsign.com':        'LexingtonSign.com',
   'www.lexingtonsign.com':    'LexingtonSign.com',
+  'twohourbanner.com':        'TwoHourBanner.com',
+  'www.twohourbanner.com':    'TwoHourBanner.com',
   'anysizebanner.com':        'AnySizeBanner.com',
   'www.anysizebanner.com':    'AnySizeBanner.com',
   'holyprinter.com':          'HolyPrinter.com',

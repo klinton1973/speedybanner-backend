@@ -93,12 +93,25 @@ async function buildAttachmentsForOrder(order) {
   return attachments;
 }
 
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function buildNotesSection(order) {
+  const notes = (order.shipping_address || {}).notes;
+  if (!notes) return '';
+  return `<div style="background:#fef9c3;border:1px solid #fde68a;border-radius:6px;padding:14px 18px;margin-bottom:20px">
+    <strong>📝 Special Instructions:</strong><br><span style="white-space:pre-wrap">${escapeHtml(notes)}</span>
+  </div>`;
+}
+
 function buildCustomerEmail(order) {
   const addr = order.shipping_address || {};
   const items = (order.items || [])
     .map(i => `<tr>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb">${i.name}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;color:#475569">${i.details || ''}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:center">${i.qty || 1}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700">$${Number(i.totalPrice).toFixed(2)}</td>
     </tr>`)
     .join('');
@@ -123,13 +136,14 @@ function buildCustomerEmail(order) {
             <tr style="background:#f8fafc">
               <th style="padding:8px 12px;text-align:left;color:#6b7280;font-weight:600">Item</th>
               <th style="padding:8px 12px;text-align:left;color:#6b7280;font-weight:600">Details</th>
+              <th style="padding:8px 12px;text-align:center;color:#6b7280;font-weight:600">Qty</th>
               <th style="padding:8px 12px;text-align:right;color:#6b7280;font-weight:600">Price</th>
             </tr>
           </thead>
           <tbody>${items}</tbody>
           <tfoot>
             <tr>
-              <td colspan="2" style="padding:10px 12px;font-weight:700;font-size:15px">Total Paid</td>
+              <td colspan="3" style="padding:10px 12px;font-weight:700;font-size:15px">Total Paid</td>
               <td style="padding:10px 12px;font-weight:700;font-size:15px;text-align:right;color:#1a3fa8">$${(order.amount_cents / 100).toFixed(2)}</td>
             </tr>
           </tfoot>
@@ -188,6 +202,7 @@ function buildAdminEmail(order) {
     .map(i => `<tr>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-weight:600">${i.name}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;color:#475569">${i.details || ''}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:center">${i.qty || 1}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700">$${Number(i.totalPrice).toFixed(2)}</td>
     </tr>`)
     .join('');
@@ -228,19 +243,22 @@ function buildAdminEmail(order) {
             <tr style="background:#f8fafc">
               <th style="padding:8px 12px;text-align:left;color:#6b7280;font-weight:600">Item</th>
               <th style="padding:8px 12px;text-align:left;color:#6b7280;font-weight:600">Details / Specs</th>
+              <th style="padding:8px 12px;text-align:center;color:#6b7280;font-weight:600">Qty</th>
               <th style="padding:8px 12px;text-align:right;color:#6b7280;font-weight:600">Price</th>
             </tr>
           </thead>
           <tbody>${items}</tbody>
           <tfoot>
             <tr style="background:#1a3fa8">
-              <td colspan="2" style="padding:10px 12px;font-weight:700;color:#fff">TOTAL CHARGED</td>
+              <td colspan="3" style="padding:10px 12px;font-weight:700;color:#fff">TOTAL CHARGED</td>
               <td style="padding:10px 12px;font-weight:700;color:#fbbf24;text-align:right;font-size:16px">$${(order.amount_cents / 100).toFixed(2)}</td>
             </tr>
           </tfoot>
         </table>
 
         ${fileSection}
+
+        ${buildNotesSection(order)}
 
         <p style="font-size:12px;color:#9ca3af;margin:0">Stripe Payment Intent: ${order.stripe_payment_intent_id}</p>
       </div>

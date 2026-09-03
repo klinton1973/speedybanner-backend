@@ -130,6 +130,7 @@ async function sendOrderEmails(order) {
 
     await resend.emails.send({
       from: `${order.site || 'SpeedyBanner'} <orders@speedybanner.com>`,
+      replyTo: 'info@speedybanner.com',
       to: order.customer_email,
       subject: `Order Confirmed — ${order.site || 'SpeedyBanner'} #${order.id}`,
       html: buildCustomerEmail(order),

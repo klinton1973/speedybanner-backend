@@ -39,6 +39,7 @@ router.post('/', async (req, res) => {
       // Confirmation email to customer
       await resend.emails.send({
         from: `${order.site || 'SpeedyBanner'} <orders@speedybanner.com>`,
+        replyTo: 'info@speedybanner.com',
         to: customerEmail,
         subject: `Order Confirmed — ${order.site || 'SpeedyBanner'} #${order.id}`,
         html: buildCustomerEmail(order),

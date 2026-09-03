@@ -3,6 +3,7 @@ const Stripe = require('stripe');
 const { createClient } = require('@supabase/supabase-js');
 const { Resend } = require('resend');
 const { fetchFileFromR2 } = require('./upload');
+const { replyToForSite } = require('../sites');
 
 const router = express.Router();
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
@@ -39,7 +40,7 @@ router.post('/', async (req, res) => {
       // Confirmation email to customer
       await resend.emails.send({
         from: `${order.site || 'SpeedyBanner'} <orders@speedybanner.com>`,
-        replyTo: 'info@speedybanner.com',
+        replyTo: replyToForSite(order.site),
         to: customerEmail,
         subject: `Order Confirmed — ${order.site || 'SpeedyBanner'} #${order.id}`,
         html: buildCustomerEmail(order),

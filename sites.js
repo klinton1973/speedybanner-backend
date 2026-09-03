@@ -32,4 +32,14 @@ function siteNameFromOrigin(origin) {
 
 const allowedOrigins = Object.keys(SITES).map(h => `https://${h}`);
 
-module.exports = { SITES, DEFAULT_SITE, siteNameFromOrigin, allowedOrigins };
+// Where customer replies to order confirmation emails should land, per site.
+// Sites not listed here fall back to info@speedybanner.com.
+const REPLY_TO_EMAIL = {
+  'OneHourBanner.com': 'info@onehourbanner.com',
+};
+
+function replyToForSite(siteName) {
+  return REPLY_TO_EMAIL[siteName] || 'info@speedybanner.com';
+}
+
+module.exports = { SITES, DEFAULT_SITE, siteNameFromOrigin, allowedOrigins, replyToForSite };

@@ -66,6 +66,31 @@ function buildShippedEmail(order, trackingNumber) {
   `;
 }
 
+function buildNoMatchAlertEmail({ recipientName, recipientZip, trackingNumber, matchCount }) {
+  return `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#1a1a2e">
+      <div style="background:#1a3fa8;padding:28px 32px;border-radius:8px 8px 0 0;text-align:center">
+        <h1 style="color:#fbbf24;margin:0;font-size:22px;letter-spacing:1px">⚠️ Tracking Needs Manual Match</h1>
+      </div>
+      <div style="background:#fff;padding:32px;border:1px solid #e5e7eb;border-top:none">
+        <p style="color:#374151;margin:0 0 20px">A FedEx tracking email came in that couldn't be automatically matched to an open order.</p>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:24px;font-size:14px">
+          <tr><td style="padding:8px 0;color:#6b7280;width:150px">Tracking Number</td><td style="padding:8px 0;font-weight:700">${trackingNumber}</td></tr>
+          <tr><td style="padding:8px 0;color:#6b7280">Recipient Name</td><td style="padding:8px 0;font-weight:700">${recipientName}</td></tr>
+          ${recipientZip ? `<tr><td style="padding:8px 0;color:#6b7280">Zip Code</td><td style="padding:8px 0;font-weight:700">${recipientZip}</td></tr>` : ''}
+          <tr><td style="padding:8px 0;color:#6b7280">Matching Orders Found</td><td style="padding:8px 0;font-weight:700">${matchCount}</td></tr>
+        </table>
+        <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:14px 18px">
+          <strong>Next step:</strong> Find the matching order and add this tracking number manually via the admin panel.
+        </div>
+      </div>
+      <div style="background:#f8fafc;padding:16px 32px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px;text-align:center;font-size:12px;color:#9ca3af">
+        Automated tracking-match alert · SpeedyBanner Backend
+      </div>
+    </div>
+  `;
+}
+
 // POST /tracking/fedex?key=... — webhook target for MailerSend inbound routing.
 // Klinton forwards FedEx tracking-details emails here (via an Outlook rule);
 // MailerSend parses them to JSON and posts the result to this endpoint.
@@ -124,8 +149,7 @@ router.post('/fedex', async (req, res) => {
           from: 'SpeedyBanner Orders <orders@speedybanner.com>',
           to: notifyTo,
           subject: `⚠️ Tracking email couldn't be auto-matched — ${trackingNumber}`,
-          html: `<p>Received a FedEx tracking email for <strong>${recipientName}</strong>${recipientZip ? ` (zip ${recipientZip})` : ''} with tracking number <strong>${trackingNumber}</strong>, but found ${matches.length} matching open order(s) instead of exactly 1.</p>
-                 <p>Please match this order manually and add the tracking number via the admin panel.</p>`,
+          html: buildNoMatchAlertEmail({ recipientName, recipientZip, trackingNumber, matchCount: matches.length }),
         });
       }
     }

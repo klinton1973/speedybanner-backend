@@ -110,6 +110,7 @@ router.post('/fedex', async (req, res) => {
     const { trackingNumber, recipientName, recipientZip } = parseFedExEmail(text);
     if (!trackingNumber || !recipientName) {
       console.error('Tracking webhook: could not parse tracking number/recipient from email', { trackingNumber, recipientName });
+      console.error('Tracking webhook: raw text was:', JSON.stringify(text));
       return;
     }
 

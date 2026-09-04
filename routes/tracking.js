@@ -45,6 +45,17 @@ function parseFedExEmail(text) {
 }
 
 const normalizeName = s => (s || '').toLowerCase().replace(/[^a-z\s]/g, '').trim();
+const nameWords = s => normalizeName(s).split(/\s+/).filter(Boolean);
+
+// FedEx's "To" name is sometimes trimmed on the shipping label (middle
+// initials, suffixes like "Jr" dropped), so require every word in FedEx's
+// name to appear in the order's name rather than an exact match — e.g.
+// "Gary Jones" matches an order placed under "Gary E Jones Jr".
+function namesMatch(fedexName, orderName) {
+  const fedexWords = nameWords(fedexName);
+  const orderWords = new Set(nameWords(orderName));
+  return fedexWords.length > 0 && fedexWords.every(w => orderWords.has(w));
+}
 
 function buildShippedEmail(order, trackingNumber) {
   return `
@@ -123,7 +134,7 @@ router.post('/fedex', async (req, res) => {
     if (error) throw error;
 
     let matches = (candidates || []).filter(
-      o => normalizeName((o.shipping_address || {}).name) === normalizeName(recipientName)
+      o => namesMatch(recipientName, (o.shipping_address || {}).name)
     );
     if (matches.length > 1 && recipientZip) {
       const zipMatches = matches.filter(o => String((o.shipping_address || {}).zip || '').slice(0, 5) === recipientZip);

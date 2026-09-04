@@ -16,6 +16,7 @@ app.use('/upload',   require('./routes/upload'));
 app.use('/checkout', require('./routes/checkout'));
 app.use('/webhook',  require('./routes/webhook'));
 app.use('/admin',    require('./routes/admin'));
+app.use('/tracking', require('./routes/tracking'));
 
 app.listen(process.env.PORT, () => {
   console.log(`Server running on port ${process.env.PORT}`);

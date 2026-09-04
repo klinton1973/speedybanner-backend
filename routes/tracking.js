@@ -165,15 +165,6 @@ router.post('/fedex', async (req, res) => {
       matches = [matches.reduce((latest, o) => new Date(o.created_at) > new Date(latest.created_at) ? o : latest)];
     }
 
-    console.log('Tracking webhook DEBUG:', {
-      trackingNumber,
-      recipientName,
-      recipientZip,
-      candidateCount: (candidates || []).length,
-      finalMatchCount: matches.length,
-      finalMatchIds: matches.map(o => o.id),
-    });
-
     if (matches.length === 1) {
       const order = matches[0];
       const existingTracking = (order.tracking_number || '').split(',').map(s => s.trim()).filter(Boolean);

@@ -18,7 +18,10 @@ function parseFedExEmail(text) {
   const trackingIdx = lines.findIndex(l => /^tracking id$/i.test(l));
   if (trackingIdx !== -1) {
     for (let i = trackingIdx + 1; i < Math.min(trackingIdx + 6, lines.length); i++) {
-      if (/^\d{10,15}$/.test(lines[i])) { trackingNumber = lines[i]; break; }
+      // The number is sometimes followed by a tracking-URL on the same line,
+      // e.g. "876727542344 <https://www.fedex.com/apps/fedextrack?...>".
+      const m = lines[i].match(/^(\d{10,15})\b/);
+      if (m) { trackingNumber = m[1]; break; }
     }
   }
 
@@ -110,7 +113,6 @@ router.post('/fedex', async (req, res) => {
     const { trackingNumber, recipientName, recipientZip } = parseFedExEmail(text);
     if (!trackingNumber || !recipientName) {
       console.error('Tracking webhook: could not parse tracking number/recipient from email', { trackingNumber, recipientName });
-      console.error('Tracking webhook: raw text was:', JSON.stringify(text));
       return;
     }
 

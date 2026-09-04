@@ -157,6 +157,13 @@ router.post('/fedex', async (req, res) => {
       const zipMatches = matches.filter(o => String((o.shipping_address || {}).zip || '').slice(0, 5) === recipientZip);
       if (zipMatches.length >= 1) matches = zipMatches;
     }
+    // Still ambiguous, but every remaining candidate belongs to the same
+    // customer (e.g. two simultaneous orders) — per Klinton, default to the
+    // most recently placed one rather than alerting. Only different people
+    // sharing a name/zip still falls through to the manual-match alert.
+    if (matches.length > 1 && new Set(matches.map(o => o.customer_email)).size === 1) {
+      matches = [matches.reduce((latest, o) => new Date(o.created_at) > new Date(latest.created_at) ? o : latest)];
+    }
 
     if (matches.length === 1) {
       const order = matches[0];

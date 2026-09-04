@@ -57,6 +57,17 @@ function namesMatch(fedexName, orderName) {
   return fedexWords.length > 0 && fedexWords.every(w => orderWords.has(w));
 }
 
+const alnum = s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+// Some customers check out under a handle (their email's local part) rather
+// than their real name, and that's what ends up on the FedEx label instead
+// of shipping_address.name — e.g. "KhleoXO" vs. an order shipping to
+// "Karen Underwood" but placed from KhleoXO@gmail.com.
+function emailHandleMatches(fedexName, customerEmail) {
+  const local = alnum((customerEmail || '').split('@')[0]);
+  return local.length > 0 && alnum(fedexName) === local;
+}
+
 function buildShippedEmail(order, trackingNumber, isAdditionalPackage) {
   return `
     <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#1a1a2e">
@@ -139,6 +150,9 @@ router.post('/fedex', async (req, res) => {
     let matches = (candidates || []).filter(
       o => namesMatch(recipientName, (o.shipping_address || {}).name)
     );
+    if (matches.length === 0) {
+      matches = (candidates || []).filter(o => emailHandleMatches(recipientName, o.customer_email));
+    }
     if (matches.length > 1 && recipientZip) {
       const zipMatches = matches.filter(o => String((o.shipping_address || {}).zip || '').slice(0, 5) === recipientZip);
       if (zipMatches.length >= 1) matches = zipMatches;

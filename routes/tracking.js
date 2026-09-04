@@ -57,7 +57,7 @@ function namesMatch(fedexName, orderName) {
   return fedexWords.length > 0 && fedexWords.every(w => orderWords.has(w));
 }
 
-function buildShippedEmail(order, trackingNumber) {
+function buildShippedEmail(order, trackingNumber, isAdditionalPackage) {
   return `
     <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#1a1a2e">
       <div style="background:#1a3fa8;padding:28px 32px;border-radius:8px 8px 0 0;text-align:center">
@@ -65,8 +65,8 @@ function buildShippedEmail(order, trackingNumber) {
         <p style="color:rgba(255,255,255,.85);margin:6px 0 0;font-size:14px">Banners · Signs · Overnight Shipping</p>
       </div>
       <div style="background:#fff;padding:32px;border:1px solid #e5e7eb;border-top:none">
-        <h2 style="color:#15803d;margin:0 0 8px">📦 Your order has shipped!</h2>
-        <p style="color:#374151;margin:0 0 24px">Order #${order.id} is on its way via FedEx.</p>
+        <h2 style="color:#15803d;margin:0 0 8px">📦 ${isAdditionalPackage ? 'Another package from your order has shipped!' : 'Your order has shipped!'}</h2>
+        <p style="color:#374151;margin:0 0 24px">${isAdditionalPackage ? `A separate box from order #${order.id}` : `Order #${order.id}`} is on its way via FedEx.</p>
         <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:14px 18px;margin-bottom:24px">
           <strong>Tracking Number:</strong> ${trackingNumber}<br>
           <a href="https://www.fedex.com/fedextrack/?trknbr=${trackingNumber}" style="color:#1a3fa8">Track your package →</a>
@@ -127,10 +127,13 @@ router.post('/fedex', async (req, res) => {
       return;
     }
 
+    // Include already-'shipped' orders too — multi-item orders often ship as
+    // separate FedEx packages, each with its own tracking number, arriving
+    // as separate emails after the order's first package already matched.
     const { data: candidates, error } = await supabase
       .from('orders')
       .select('*')
-      .in('status', ['paid', 'printing']);
+      .in('status', ['paid', 'printing', 'shipped']);
     if (error) throw error;
 
     let matches = (candidates || []).filter(
@@ -143,18 +146,30 @@ router.post('/fedex', async (req, res) => {
 
     if (matches.length === 1) {
       const order = matches[0];
+      const existingTracking = (order.tracking_number || '').split(',').map(s => s.trim()).filter(Boolean);
+
+      if (existingTracking.includes(trackingNumber)) {
+        // Same tracking number already processed (e.g. a duplicate forward) — no-op.
+        return;
+      }
+
+      const isAdditionalPackage = existingTracking.length > 0;
 
       await resend.emails.send({
         from: `${order.site || 'SpeedyBanner'} <orders@speedybanner.com>`,
         replyTo: replyToForSite(order.site),
         to: order.customer_email,
-        subject: `Your Order Has Shipped — ${order.site || 'SpeedyBanner'} #${order.id}`,
-        html: buildShippedEmail(order, trackingNumber),
+        subject: `${isAdditionalPackage ? 'Another Package From Your Order Has Shipped' : 'Your Order Has Shipped'} — ${order.site || 'SpeedyBanner'} #${order.id}`,
+        html: buildShippedEmail(order, trackingNumber, isAdditionalPackage),
       });
 
       const { error: updateError } = await supabase
         .from('orders')
-        .update({ status: 'shipped', tracking_number: trackingNumber, updated_at: new Date().toISOString() })
+        .update({
+          status: 'shipped',
+          tracking_number: [...existingTracking, trackingNumber].join(', '),
+          updated_at: new Date().toISOString(),
+        })
         .eq('id', order.id);
       if (updateError) console.error('Tracking webhook: failed to update order after sending tracking email', updateError);
     } else {

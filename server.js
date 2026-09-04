@@ -10,7 +10,9 @@ app.use(cors({ origin: allowedOrigins }));
 
 // Stripe webhooks need raw body — must come BEFORE express.json()
 app.use('/webhook', express.raw({ type: 'application/json' }));
-app.use(express.json());
+// Default 100kb is too small for MailerSend's inbound webhook payloads,
+// which include the full raw email (headers, HTML, base64 attachments).
+app.use(express.json({ limit: '10mb' }));
 
 app.use('/upload',   require('./routes/upload'));
 app.use('/checkout', require('./routes/checkout'));

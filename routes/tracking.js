@@ -141,10 +141,11 @@ router.post('/fedex', async (req, res) => {
         html: buildShippedEmail(order, trackingNumber),
       });
 
-      await supabase
+      const { error: updateError } = await supabase
         .from('orders')
         .update({ status: 'shipped', tracking_number: trackingNumber, updated_at: new Date().toISOString() })
         .eq('id', order.id);
+      if (updateError) console.error('Tracking webhook: failed to update order after sending tracking email', updateError);
     } else {
       const notifyTo = process.env.NOTIFY_EMAIL;
       if (notifyTo) {

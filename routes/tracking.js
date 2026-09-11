@@ -91,9 +91,25 @@ function buildShippedEmail(order, trackingNumber, isAdditionalPackage) {
   `;
 }
 
-function buildNoMatchAlertEmail({ recipientName, recipientZip, trackingNumber, matchCount }) {
+function buildNoMatchAlertEmail({ recipientName, recipientZip, trackingNumber, matchCount, candidates }) {
+  const candidateRows = (candidates || []).map(o => {
+    const itemsSummary = (Array.isArray(o.items) ? o.items : [])
+      .map(i => i.name).filter(Boolean).join(', ') || '(no items)';
+    const amount = typeof o.amount_cents === 'number' ? `$${(o.amount_cents / 100).toFixed(2)}` : '';
+    const placed = o.created_at ? new Date(o.created_at).toLocaleDateString() : '';
+    return `
+          <tr>
+            <td style="padding:8px;border:1px solid #e5e7eb;font-family:monospace;font-size:12px">${o.id}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb">${o.customer_email || ''}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb">${amount}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb">${itemsSummary}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb">${o.status || ''}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb">${placed}</td>
+          </tr>`;
+  }).join('');
+
   return `
-    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#1a1a2e">
+    <div style="font-family:Arial,sans-serif;max-width:680px;margin:0 auto;color:#1a1a2e">
       <div style="background:#1a3fa8;padding:28px 32px;border-radius:8px 8px 0 0;text-align:center">
         <h1 style="color:#fbbf24;margin:0;font-size:22px;letter-spacing:1px">⚠️ Tracking Needs Manual Match</h1>
       </div>
@@ -105,6 +121,18 @@ function buildNoMatchAlertEmail({ recipientName, recipientZip, trackingNumber, m
           ${recipientZip ? `<tr><td style="padding:8px 0;color:#6b7280">Zip Code</td><td style="padding:8px 0;font-weight:700">${recipientZip}</td></tr>` : ''}
           <tr><td style="padding:8px 0;color:#6b7280">Matching Orders Found</td><td style="padding:8px 0;font-weight:700">${matchCount}</td></tr>
         </table>
+        ${candidateRows ? `
+        <p style="color:#374151;margin:0 0 8px;font-weight:700">Candidate orders:</p>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:24px;font-size:13px">
+          <tr style="background:#f8fafc">
+            <th style="padding:8px;border:1px solid #e5e7eb;text-align:left">Order ID</th>
+            <th style="padding:8px;border:1px solid #e5e7eb;text-align:left">Email</th>
+            <th style="padding:8px;border:1px solid #e5e7eb;text-align:left">Amount</th>
+            <th style="padding:8px;border:1px solid #e5e7eb;text-align:left">Items</th>
+            <th style="padding:8px;border:1px solid #e5e7eb;text-align:left">Status</th>
+            <th style="padding:8px;border:1px solid #e5e7eb;text-align:left">Placed</th>
+          </tr>${candidateRows}
+        </table>` : ''}
         <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:14px 18px">
           <strong>Next step:</strong> Find the matching order and add this tracking number manually via the admin panel.
         </div>
@@ -200,7 +228,20 @@ router.post('/fedex', async (req, res) => {
           from: 'SpeedyBanner Orders <orders@speedybanner.com>',
           to: notifyTo,
           subject: `⚠️ Tracking email couldn't be auto-matched — ${trackingNumber}`,
-          html: buildNoMatchAlertEmail({ recipientName, recipientZip, trackingNumber, matchCount: matches.length }),
+          html: buildNoMatchAlertEmail({
+            recipientName,
+            recipientZip,
+            trackingNumber,
+            matchCount: matches.length,
+            candidates: matches.map(o => ({
+              id: o.id,
+              customer_email: o.customer_email,
+              amount_cents: o.amount_cents,
+              items: o.items,
+              status: o.status,
+              created_at: o.created_at,
+            })),
+          }),
         });
       }
     }

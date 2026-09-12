@@ -26,9 +26,10 @@ router.post('/', async (req, res) => {
     const pi = event.data.object;
     const { orderId, customerEmail } = pi.metadata;
 
+    // Mark order paid
+    let order;
     try {
-      // Mark order paid
-      const { data: order, error } = await supabase
+      const { data, error } = await supabase
         .from('orders')
         .update({ status: 'paid', paid_at: new Date().toISOString() })
         .eq('id', orderId)
@@ -36,8 +37,16 @@ router.post('/', async (req, res) => {
         .single();
 
       if (error) throw error;
+      order = data;
+    } catch (err) {
+      console.error(`Order update failed for order #${orderId}:`, err);
+      // Still return 200 so Stripe does not retry — nothing else can proceed without the order row
+      return res.json({ received: true });
+    }
 
-      // Confirmation email to customer
+    // Confirmation email to customer — isolated so a failure here can never block the internal
+    // sale notification below (previously both lived in one try/catch and shared one failure point)
+    try {
       await resend.emails.send({
         from: `${order.site || 'SpeedyBanner'} <orders@speedybanner.com>`,
         replyTo: replyToForSite(order.site),
@@ -45,23 +54,41 @@ router.post('/', async (req, res) => {
         subject: `Order Confirmed — ${order.site || 'SpeedyBanner'} #${order.id}`,
         html: buildCustomerEmail(order),
       });
+    } catch (err) {
+      console.error(`Customer confirmation email failed for order #${order.id}:`, err);
+    }
 
-      // Internal print/work order notification
-      const notifyTo = process.env.NOTIFY_EMAIL;
-      if (notifyTo) {
-        const attachments = await buildAttachmentsForOrder(order);
+    // Internal print/work order notification — isolated from the customer email above, and
+    // falls back to sending without attachments if the attachment-laden send fails, so a bad
+    // design file can never fully silence the sale notification
+    const notifyTo = process.env.NOTIFY_EMAIL;
+    if (notifyTo) {
+      const attachments = await buildAttachmentsForOrder(order);
+      const adminSubject = `🖨️ NEW ORDER #${order.id} — [${order.site || 'SpeedyBanner'}] — $${(order.amount_cents / 100).toFixed(2)} — ${order.customer_email}`;
 
+      try {
         await resend.emails.send({
           from: 'SpeedyBanner Orders <orders@speedybanner.com>',
           to: notifyTo,
-          subject: `🖨️ NEW ORDER #${order.id} — [${order.site || 'SpeedyBanner'}] — $${(order.amount_cents / 100).toFixed(2)} — ${order.customer_email}`,
+          subject: adminSubject,
           html: buildAdminEmail(order),
           attachments,
         });
+      } catch (err) {
+        console.error(`Admin order notification failed for order #${order.id} (attachments: ${attachments.length}):`, err);
+        if (attachments.length > 0) {
+          try {
+            await resend.emails.send({
+              from: 'SpeedyBanner Orders <orders@speedybanner.com>',
+              to: notifyTo,
+              subject: `${adminSubject} [attachments failed — see file links in email]`,
+              html: buildAdminEmail(order),
+            });
+          } catch (fallbackErr) {
+            console.error(`Admin order notification fallback (no attachments) also failed for order #${order.id}:`, fallbackErr);
+          }
+        }
       }
-    } catch (err) {
-      console.error('Post-payment processing error:', err);
-      // Still return 200 so Stripe does not retry
     }
   }
 

@@ -47,13 +47,16 @@ router.post('/', async (req, res) => {
     // Confirmation email to customer — isolated so a failure here can never block the internal
     // sale notification below (previously both lived in one try/catch and shared one failure point)
     try {
-      await resend.emails.send({
+      const { error } = await resend.emails.send({
         from: `${order.site || 'SpeedyBanner'} <orders@speedybanner.com>`,
         replyTo: replyToForSite(order.site),
         to: customerEmail,
         subject: `Order Confirmed — ${order.site || 'SpeedyBanner'} #${order.id}`,
         html: buildCustomerEmail(order),
       });
+      // The Resend SDK resolves (does not throw) on API-level failures like validation
+      // errors — it reports them via this `error` field, so it must be checked explicitly.
+      if (error) throw error;
     } catch (err) {
       console.error(`Customer confirmation email failed for order #${order.id}:`, err);
     }
@@ -67,23 +70,25 @@ router.post('/', async (req, res) => {
       const adminSubject = `🖨️ NEW ORDER #${order.id} — [${order.site || 'SpeedyBanner'}] — $${(order.amount_cents / 100).toFixed(2)} — ${order.customer_email}`;
 
       try {
-        await resend.emails.send({
+        const { error } = await resend.emails.send({
           from: 'SpeedyBanner Orders <orders@speedybanner.com>',
           to: notifyTo,
           subject: adminSubject,
           html: buildAdminEmail(order),
           attachments,
         });
+        if (error) throw error;
       } catch (err) {
         console.error(`Admin order notification failed for order #${order.id} (attachments: ${attachments.length}):`, err);
         if (attachments.length > 0) {
           try {
-            await resend.emails.send({
+            const { error: fallbackError } = await resend.emails.send({
               from: 'SpeedyBanner Orders <orders@speedybanner.com>',
               to: notifyTo,
               subject: `${adminSubject} [attachments failed — see file links in email]`,
               html: buildAdminEmail(order),
             });
+            if (fallbackError) throw fallbackError;
           } catch (fallbackErr) {
             console.error(`Admin order notification fallback (no attachments) also failed for order #${order.id}:`, fallbackErr);
           }
@@ -106,15 +111,22 @@ async function buildAttachmentsForOrder(order) {
   if (order.file_key && !keys.includes(order.file_key)) keys.push(order.file_key);
 
   const MAX_ATTACH = 25 * 1024 * 1024; // 25 MB per file
+  const MAX_TOTAL = 35 * 1024 * 1024; // Resend caps the whole email (content + attachments) at 40MB — leave headroom for the HTML body
   const attachments = [];
+  let totalBytes = 0;
   for (const key of keys) {
     try {
       const file = await fetchFileFromR2(key);
-      if (file.buffer.length <= MAX_ATTACH) {
-        attachments.push({ filename: file.originalName, content: file.buffer });
-      } else {
+      if (file.buffer.length > MAX_ATTACH) {
         console.log(`File ${key} is ${file.buffer.length} bytes — too large to attach, link included in email`);
+        continue;
       }
+      if (totalBytes + file.buffer.length > MAX_TOTAL) {
+        console.log(`File ${key} would push total attachments past ${MAX_TOTAL} bytes — skipping, link included in email`);
+        continue;
+      }
+      attachments.push({ filename: file.originalName, content: file.buffer });
+      totalBytes += file.buffer.length;
     } catch (fileErr) {
       console.error(`Could not fetch file ${key} for attachment:`, fileErr.message);
     }

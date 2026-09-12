@@ -125,30 +125,38 @@ router.post('/create-payment-intent', async (req, res) => {
 
 // Shared email sending used by free orders (paid orders use the webhook)
 async function sendOrderEmails(order) {
-  try {
-    const { buildCustomerEmail, buildAdminEmail, buildAttachmentsForOrder } = require('./webhook');
+  const { buildCustomerEmail, buildAdminEmail, buildAttachmentsForOrder } = require('./webhook');
 
-    await resend.emails.send({
+  try {
+    const { error } = await resend.emails.send({
       from: `${order.site || 'SpeedyBanner'} <orders@speedybanner.com>`,
       replyTo: replyToForSite(order.site),
       to: order.customer_email,
       subject: `Order Confirmed — ${order.site || 'SpeedyBanner'} #${order.id}`,
       html: buildCustomerEmail(order),
     });
+    // The Resend SDK resolves (does not throw) on API-level failures like validation
+    // errors — it reports them via this `error` field, so it must be checked explicitly.
+    if (error) throw error;
+  } catch (err) {
+    console.error(`Free order customer email failed for order #${order.id}:`, err);
+  }
 
-    const notifyTo = process.env.NOTIFY_EMAIL;
-    if (notifyTo) {
+  const notifyTo = process.env.NOTIFY_EMAIL;
+  if (notifyTo) {
+    try {
       const attachments = await buildAttachmentsForOrder(order);
-      await resend.emails.send({
+      const { error } = await resend.emails.send({
         from: 'SpeedyBanner Orders <orders@speedybanner.com>',
         to: notifyTo,
         subject: `🖨️ NEW ORDER #${order.id} — [${order.site || 'SpeedyBanner'}] — FREE (coupon) — ${order.customer_email}`,
         html: buildAdminEmail(order),
         attachments,
       });
+      if (error) throw error;
+    } catch (err) {
+      console.error(`Free order admin notification failed for order #${order.id}:`, err);
     }
-  } catch (err) {
-    console.error('Free order email error:', err);
   }
 }
 

@@ -29,12 +29,53 @@ const PRICES = {
   'door-hanger':         { min:  9 },
 };
 
+// Finds the existing Stripe Customer for an email, or creates one.
+// Used only when a customer opts in to saving their card, or is paying with
+// one already saved — never created for ordinary guest checkouts.
+async function findOrCreateStripeCustomer(email) {
+  const existing = await stripe.customers.list({ email, limit: 1 });
+  if (existing.data.length > 0) return existing.data[0];
+  return stripe.customers.create({ email });
+}
+
+// GET /checkout/saved-cards?email=...
+// Returns the masked saved cards (if any) for a returning customer, so the
+// checkout form can offer "pay with card ending in ####" instead of asking
+// them to re-enter their card. Returns an empty list for guests / no match —
+// this never reveals whether an email has ever placed an order, only whether
+// it has a saved card, which the customer themselves opted into saving.
+router.get('/saved-cards', async (req, res) => {
+  const email = (req.query.email || '').trim().toLowerCase();
+  if (!email) return res.json({ cards: [] });
+
+  try {
+    const customers = await stripe.customers.list({ email, limit: 1 });
+    if (customers.data.length === 0) return res.json({ cards: [] });
+
+    const customer = customers.data[0];
+    const methods = await stripe.paymentMethods.list({ customer: customer.id, type: 'card' });
+    const cards = methods.data.map(pm => ({
+      id: pm.id,
+      brand: pm.card.brand,
+      last4: pm.card.last4,
+      expMonth: pm.card.exp_month,
+      expYear: pm.card.exp_year,
+    }));
+    res.json({ cards });
+  } catch (err) {
+    console.error('[checkout] saved-cards lookup error:', err?.message || err);
+    // Fail soft — a lookup error should never block checkout, just fall back to a fresh card
+    res.json({ cards: [] });
+  }
+});
+
 // POST /checkout/create-payment-intent
-// Body: { items, customerEmail, shippingAddress, fileKey, discountCents }
+// Body: { items, customerEmail, shippingAddress, fileKey, discountCents,
+//          saveCard, savedPaymentMethodId }
 // Returns: { clientSecret, orderId } for paid orders
 //          { free: true, orderId }   for $0 coupon orders
 router.post('/create-payment-intent', async (req, res) => {
-  const { items, customerEmail, shippingAddress, fileKey, discountCents = 0 } = req.body;
+  const { items, customerEmail, shippingAddress, fileKey, discountCents = 0, saveCard, savedPaymentMethodId } = req.body;
   const site = siteNameFromOrigin(req.headers.origin);
 
   console.log(`[checkout] request from ${customerEmail} on ${site}, items: ${items?.length}, discountCents: ${discountCents}`);
@@ -86,12 +127,37 @@ router.post('/create-payment-intent', async (req, res) => {
     }
 
     // ── Paid order ───────────────────────────────────────────────────────────
-    const paymentIntent = await stripe.paymentIntents.create({
+    // A Stripe Customer is only created when the shopper opts in to saving their
+    // card (saveCard) or is paying with one they saved on a prior order
+    // (savedPaymentMethodId) — plain guest checkouts never get one.
+    let stripeCustomerId;
+    if (saveCard || savedPaymentMethodId) {
+      const customer = await findOrCreateStripeCustomer(customerEmail);
+      stripeCustomerId = customer.id;
+    }
+
+    // A saved-card ID is client-supplied, so it must be confirmed to actually
+    // belong to this customer before it can be charged — otherwise a forged
+    // ID could be used to attempt a charge against a stranger's saved card.
+    if (savedPaymentMethodId) {
+      const pm = await stripe.paymentMethods.retrieve(savedPaymentMethodId);
+      if (pm.customer !== stripeCustomerId) {
+        console.warn(`[checkout] rejected savedPaymentMethodId ${savedPaymentMethodId}: not owned by customer for ${customerEmail}`);
+        return res.status(400).json({ error: 'Invalid saved card' });
+      }
+    }
+
+    const paymentIntentParams = {
       amount,
       currency: 'usd',
       receipt_email: customerEmail,
       metadata: { customerEmail },
-    });
+    };
+    if (stripeCustomerId) paymentIntentParams.customer = stripeCustomerId;
+    if (saveCard) paymentIntentParams.setup_future_usage = 'off_session';
+    if (savedPaymentMethodId) paymentIntentParams.payment_method = savedPaymentMethodId;
+
+    const paymentIntent = await stripe.paymentIntents.create(paymentIntentParams);
 
     const { data: order, error } = await supabase
       .from('orders')

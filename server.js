@@ -18,7 +18,9 @@ app.use('/upload',   require('./routes/upload'));
 app.use('/checkout', require('./routes/checkout'));
 app.use('/webhook',  require('./routes/webhook'));
 app.use('/admin',    require('./routes/admin'));
-app.use('/tracking', require('./routes/tracking'));
+const trackingRouter = require('./routes/tracking');
+app.use('/tracking', trackingRouter);
+trackingRouter.startUnmatchedTrackingWorker();
 
 app.listen(process.env.PORT, () => {
   console.log(`Server running on port ${process.env.PORT}`);

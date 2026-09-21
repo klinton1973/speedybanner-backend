@@ -91,57 +91,66 @@ function buildShippedEmail(order, trackingNumber, isAdditionalPackage) {
   `;
 }
 
-function buildNoMatchAlertEmail({ recipientName, recipientZip, trackingNumber, matchCount, candidates }) {
-  const candidateRows = (candidates || []).map(o => {
-    const itemsSummary = (Array.isArray(o.items) ? o.items : [])
-      .map(i => i.name).filter(Boolean).join(', ') || '(no items)';
-    const amount = typeof o.amount_cents === 'number' ? `$${(o.amount_cents / 100).toFixed(2)}` : '';
-    const placed = o.created_at ? new Date(o.created_at).toLocaleDateString() : '';
-    return `
-          <tr>
-            <td style="padding:8px;border:1px solid #e5e7eb;font-family:monospace;font-size:12px">${o.id}</td>
-            <td style="padding:8px;border:1px solid #e5e7eb">${o.customer_email || ''}</td>
-            <td style="padding:8px;border:1px solid #e5e7eb">${amount}</td>
-            <td style="padding:8px;border:1px solid #e5e7eb">${itemsSummary}</td>
-            <td style="padding:8px;border:1px solid #e5e7eb">${o.status || ''}</td>
-            <td style="padding:8px;border:1px solid #e5e7eb">${placed}</td>
-          </tr>`;
-  }).join('');
+// Returns the single order this FedEx shipment belongs to, or null if there's
+// no match or it's ambiguous (different customers sharing a name/zip).
+async function findSingleMatch({ recipientName, recipientZip }) {
+  // Include already-'shipped' orders too — multi-item orders often ship as
+  // separate FedEx packages, each with its own tracking number, arriving
+  // as separate emails after the order's first package already matched.
+  const { data: candidates, error } = await supabase
+    .from('orders')
+    .select('*')
+    .in('status', ['paid', 'printing', 'shipped']);
+  if (error) throw error;
 
-  return `
-    <div style="font-family:Arial,sans-serif;max-width:680px;margin:0 auto;color:#1a1a2e">
-      <div style="background:#1a3fa8;padding:28px 32px;border-radius:8px 8px 0 0;text-align:center">
-        <h1 style="color:#fbbf24;margin:0;font-size:22px;letter-spacing:1px">⚠️ Tracking Needs Manual Match</h1>
-      </div>
-      <div style="background:#fff;padding:32px;border:1px solid #e5e7eb;border-top:none">
-        <p style="color:#374151;margin:0 0 20px">A FedEx tracking email came in that couldn't be automatically matched to an open order.</p>
-        <table style="width:100%;border-collapse:collapse;margin-bottom:24px;font-size:14px">
-          <tr><td style="padding:8px 0;color:#6b7280;width:150px">Tracking Number</td><td style="padding:8px 0;font-weight:700">${trackingNumber}</td></tr>
-          <tr><td style="padding:8px 0;color:#6b7280">Recipient Name</td><td style="padding:8px 0;font-weight:700">${recipientName}</td></tr>
-          ${recipientZip ? `<tr><td style="padding:8px 0;color:#6b7280">Zip Code</td><td style="padding:8px 0;font-weight:700">${recipientZip}</td></tr>` : ''}
-          <tr><td style="padding:8px 0;color:#6b7280">Matching Orders Found</td><td style="padding:8px 0;font-weight:700">${matchCount}</td></tr>
-        </table>
-        ${candidateRows ? `
-        <p style="color:#374151;margin:0 0 8px;font-weight:700">Candidate orders:</p>
-        <table style="width:100%;border-collapse:collapse;margin-bottom:24px;font-size:13px">
-          <tr style="background:#f8fafc">
-            <th style="padding:8px;border:1px solid #e5e7eb;text-align:left">Order ID</th>
-            <th style="padding:8px;border:1px solid #e5e7eb;text-align:left">Email</th>
-            <th style="padding:8px;border:1px solid #e5e7eb;text-align:left">Amount</th>
-            <th style="padding:8px;border:1px solid #e5e7eb;text-align:left">Items</th>
-            <th style="padding:8px;border:1px solid #e5e7eb;text-align:left">Status</th>
-            <th style="padding:8px;border:1px solid #e5e7eb;text-align:left">Placed</th>
-          </tr>${candidateRows}
-        </table>` : ''}
-        <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:14px 18px">
-          <strong>Next step:</strong> Find the matching order and add this tracking number manually via the admin panel.
-        </div>
-      </div>
-      <div style="background:#f8fafc;padding:16px 32px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px;text-align:center;font-size:12px;color:#9ca3af">
-        Automated tracking-match alert · SpeedyBanner Backend
-      </div>
-    </div>
-  `;
+  let matches = (candidates || []).filter(
+    o => namesMatch(recipientName, (o.shipping_address || {}).name)
+  );
+  if (matches.length === 0) {
+    matches = (candidates || []).filter(o => emailHandleMatches(recipientName, o.customer_email));
+  }
+  if (matches.length > 1 && recipientZip) {
+    const zipMatches = matches.filter(o => String((o.shipping_address || {}).zip || '').slice(0, 5) === recipientZip);
+    if (zipMatches.length >= 1) matches = zipMatches;
+  }
+  // Still ambiguous, but every remaining candidate belongs to the same
+  // customer (e.g. two simultaneous orders) — per Klinton, default to the
+  // most recently placed one rather than alerting. Only different people
+  // sharing a name/zip still falls through to the manual-match queue.
+  if (matches.length > 1 && new Set(matches.map(o => o.customer_email)).size === 1) {
+    matches = [matches.reduce((latest, o) => new Date(o.created_at) > new Date(latest.created_at) ? o : latest)];
+  }
+  return matches.length === 1 ? matches[0] : null;
+}
+
+// Emails the customer their tracking number and records it on the order.
+async function applyTrackingToOrder(order, trackingNumber) {
+  const existingTracking = (order.tracking_number || '').split(',').map(s => s.trim()).filter(Boolean);
+
+  if (existingTracking.includes(trackingNumber)) {
+    // Same tracking number already processed (e.g. a duplicate forward) — no-op.
+    return;
+  }
+
+  const isAdditionalPackage = existingTracking.length > 0;
+
+  await resend.emails.send({
+    from: `${order.site || 'SpeedyBanner'} <orders@speedybanner.com>`,
+    replyTo: replyToForSite(order.site),
+    to: order.customer_email,
+    subject: `${isAdditionalPackage ? 'Another Package From Your Order Has Shipped' : 'Your Order Has Shipped'} — ${order.site || 'SpeedyBanner'} #${order.id}`,
+    html: buildShippedEmail(order, trackingNumber, isAdditionalPackage),
+  });
+
+  const { error: updateError } = await supabase
+    .from('orders')
+    .update({
+      status: 'shipped',
+      tracking_number: [...existingTracking, trackingNumber].join(', '),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', order.id);
+  if (updateError) console.error('Tracking webhook: failed to update order after sending tracking email', updateError);
 }
 
 // POST /tracking/fedex?key=... — webhook target for MailerSend inbound routing.
@@ -166,88 +175,156 @@ router.post('/fedex', async (req, res) => {
       return;
     }
 
-    // Include already-'shipped' orders too — multi-item orders often ship as
-    // separate FedEx packages, each with its own tracking number, arriving
-    // as separate emails after the order's first package already matched.
-    const { data: candidates, error } = await supabase
-      .from('orders')
-      .select('*')
-      .in('status', ['paid', 'printing', 'shipped']);
-    if (error) throw error;
-
-    let matches = (candidates || []).filter(
-      o => namesMatch(recipientName, (o.shipping_address || {}).name)
-    );
-    if (matches.length === 0) {
-      matches = (candidates || []).filter(o => emailHandleMatches(recipientName, o.customer_email));
-    }
-    if (matches.length > 1 && recipientZip) {
-      const zipMatches = matches.filter(o => String((o.shipping_address || {}).zip || '').slice(0, 5) === recipientZip);
-      if (zipMatches.length >= 1) matches = zipMatches;
-    }
-    // Still ambiguous, but every remaining candidate belongs to the same
-    // customer (e.g. two simultaneous orders) — per Klinton, default to the
-    // most recently placed one rather than alerting. Only different people
-    // sharing a name/zip still falls through to the manual-match alert.
-    if (matches.length > 1 && new Set(matches.map(o => o.customer_email)).size === 1) {
-      matches = [matches.reduce((latest, o) => new Date(o.created_at) > new Date(latest.created_at) ? o : latest)];
+    const order = await findSingleMatch({ trackingNumber, recipientName, recipientZip });
+    if (order) {
+      await applyTrackingToOrder(order, trackingNumber);
+      return;
     }
 
-    if (matches.length === 1) {
-      const order = matches[0];
-      const existingTracking = (order.tracking_number || '').split(',').map(s => s.trim()).filter(Boolean);
-
-      if (existingTracking.includes(trackingNumber)) {
-        // Same tracking number already processed (e.g. a duplicate forward) — no-op.
-        return;
-      }
-
-      const isAdditionalPackage = existingTracking.length > 0;
-
-      await resend.emails.send({
-        from: `${order.site || 'SpeedyBanner'} <orders@speedybanner.com>`,
-        replyTo: replyToForSite(order.site),
-        to: order.customer_email,
-        subject: `${isAdditionalPackage ? 'Another Package From Your Order Has Shipped' : 'Your Order Has Shipped'} — ${order.site || 'SpeedyBanner'} #${order.id}`,
-        html: buildShippedEmail(order, trackingNumber, isAdditionalPackage),
-      });
-
-      const { error: updateError } = await supabase
-        .from('orders')
-        .update({
-          status: 'shipped',
-          tracking_number: [...existingTracking, trackingNumber].join(', '),
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', order.id);
-      if (updateError) console.error('Tracking webhook: failed to update order after sending tracking email', updateError);
-    } else {
-      const notifyTo = process.env.NOTIFY_EMAIL;
-      if (notifyTo) {
-        await resend.emails.send({
-          from: 'SpeedyBanner Orders <orders@speedybanner.com>',
-          to: notifyTo,
-          subject: `⚠️ Tracking email couldn't be auto-matched — ${trackingNumber}`,
-          html: buildNoMatchAlertEmail({
-            recipientName,
-            recipientZip,
-            trackingNumber,
-            matchCount: matches.length,
-            candidates: matches.map(o => ({
-              id: o.id,
-              customer_email: o.customer_email,
-              amount_cents: o.amount_cents,
-              items: o.items,
-              status: o.status,
-              created_at: o.created_at,
-            })),
-          }),
-        });
-      }
-    }
+    // No single match yet. Instead of alerting right away, park it: the
+    // background check below retries the match for a few days (e.g. the order
+    // gets entered later) and anything still unmatched goes out once a day in
+    // a single summary email instead of one alert per package.
+    const { error: queueError } = await supabase
+      .from('unmatched_tracking')
+      .upsert({
+        tracking_number: trackingNumber,
+        recipient_name: recipientName,
+        recipient_zip: recipientZip,
+      }, { onConflict: 'tracking_number', ignoreDuplicates: true });
+    if (queueError) throw queueError;
   } catch (err) {
     console.error('Tracking webhook processing error:', err);
   }
 });
+
+// ---------------------------------------------------------------------------
+// Unmatched-tracking queue: retry + once-a-day summary
+// ---------------------------------------------------------------------------
+
+const CHECK_EVERY_MS = 15 * 60 * 1000;                                 // re-check every 15 min
+const HOLD_BEFORE_REPORTING_MS = 3 * 60 * 60 * 1000;                   // give it 3h before it can be reported
+const GIVE_UP_AFTER_MS = 7 * 24 * 60 * 60 * 1000;                      // stop retrying after 7 days
+const DIGEST_HOUR_ET = Number(process.env.TRACKING_DIGEST_HOUR_ET || 8); // summary goes out at 8 AM Eastern
+
+// Date/hour in America/New_York, so the summary lands at the same local time
+// year-round regardless of the server's timezone or DST.
+function easternParts(date) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23',
+  }).formatToParts(date).map(p => [p.type, p.value]));
+  return { day: `${parts.year}-${parts.month}-${parts.day}`, hour: Number(parts.hour) };
+}
+
+function buildDigestEmail(rows) {
+  const trs = rows.map(r => `
+          <tr>
+            <td style="padding:8px;border:1px solid #e5e7eb;font-family:monospace">
+              <a href="https://www.fedex.com/fedextrack/?trknbr=${r.tracking_number}" style="color:#1a3fa8">${r.tracking_number}</a>
+            </td>
+            <td style="padding:8px;border:1px solid #e5e7eb">${r.recipient_name || ''}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb">${r.recipient_zip || ''}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb">${new Date(r.received_at).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</td>
+          </tr>`).join('');
+
+  return `
+    <div style="font-family:Arial,sans-serif;max-width:680px;margin:0 auto;color:#1a1a2e">
+      <div style="background:#1a3fa8;padding:24px 32px;border-radius:8px 8px 0 0;text-align:center">
+        <h1 style="color:#fbbf24;margin:0;font-size:22px">Daily Unmatched Tracking Summary</h1>
+      </div>
+      <div style="background:#fff;padding:28px 32px;border:1px solid #e5e7eb;border-top:none">
+        <p style="color:#374151;margin:0 0 18px">These FedEx shipments still didn't match an order after at least 3 hours. If any of them are manual orders you entered separately, you can ignore them &mdash; each one is only reported once.</p>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-size:14px">
+          <tr style="background:#f8fafc">
+            <th style="padding:8px;border:1px solid #e5e7eb;text-align:left">Tracking</th>
+            <th style="padding:8px;border:1px solid #e5e7eb;text-align:left">Recipient</th>
+            <th style="padding:8px;border:1px solid #e5e7eb;text-align:left">Zip</th>
+            <th style="padding:8px;border:1px solid #e5e7eb;text-align:left">Received</th>
+          </tr>${trs}
+        </table>
+        <p style="color:#6b7280;font-size:13px;margin:0">The backend keeps re-checking these for 7 days. If a matching order shows up in that time, the customer gets their tracking email automatically.</p>
+      </div>
+      <div style="background:#f8fafc;padding:14px 32px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px;text-align:center;font-size:12px;color:#9ca3af">
+        Automated tracking-match summary · SpeedyBanner Backend
+      </div>
+    </div>
+  `;
+}
+
+let checkRunning = false;
+async function checkUnmatchedTracking(now = new Date()) {
+  if (checkRunning) return;
+  checkRunning = true;
+  try {
+    const { data: pending, error } = await supabase
+      .from('unmatched_tracking')
+      .select('*')
+      .eq('status', 'pending')
+      .order('received_at', { ascending: true });
+    if (error) throw error;
+
+    const stillUnmatched = [];
+    for (const row of pending || []) {
+      const order = await findSingleMatch({
+        trackingNumber: row.tracking_number, recipientName: row.recipient_name, recipientZip: row.recipient_zip,
+      });
+      if (order) {
+        await applyTrackingToOrder(order, row.tracking_number);
+        await supabase.from('unmatched_tracking')
+          .update({ status: 'matched', resolved_at: now.toISOString(), order_id: order.id })
+          .eq('id', row.id);
+      } else if (now - new Date(row.received_at) > GIVE_UP_AFTER_MS) {
+        await supabase.from('unmatched_tracking')
+          .update({ status: 'expired', resolved_at: now.toISOString() })
+          .eq('id', row.id);
+      } else {
+        stillUnmatched.push(row);
+      }
+    }
+
+    // Once a day, at/after the digest hour, report anything that's been
+    // unmatched for 3h+ and hasn't been reported before.
+    const { day, hour } = easternParts(now);
+    if (hour < DIGEST_HOUR_ET) return;
+    const toReport = stillUnmatched.filter(r => !r.notified_at && now - new Date(r.received_at) >= HOLD_BEFORE_REPORTING_MS);
+    if (toReport.length === 0) return;
+
+    const { data: recentlyNotified, error: recentError } = await supabase
+      .from('unmatched_tracking')
+      .select('notified_at')
+      .not('notified_at', 'is', null)
+      .order('notified_at', { ascending: false })
+      .limit(1);
+    if (recentError) throw recentError;
+    const lastDigest = recentlyNotified && recentlyNotified[0] && recentlyNotified[0].notified_at;
+    if (lastDigest && easternParts(new Date(lastDigest)).day === day) return; // already sent today
+
+    const notifyTo = process.env.NOTIFY_EMAIL;
+    if (!notifyTo) return;
+    const { error: sendError } = await resend.emails.send({
+      from: 'SpeedyBanner Orders <orders@speedybanner.com>',
+      to: notifyTo,
+      subject: `Tracking summary: ${toReport.length} shipment${toReport.length === 1 ? '' : 's'} not matched to an order`,
+      html: buildDigestEmail(toReport),
+    });
+    if (sendError) throw sendError;
+
+    await supabase.from('unmatched_tracking')
+      .update({ notified_at: now.toISOString() })
+      .in('id', toReport.map(r => r.id));
+  } catch (err) {
+    console.error('Unmatched tracking check error:', err);
+  } finally {
+    checkRunning = false;
+  }
+}
+
+function startUnmatchedTrackingWorker() {
+  setTimeout(checkUnmatchedTracking, 60 * 1000); // first pass shortly after boot
+  setInterval(checkUnmatchedTracking, CHECK_EVERY_MS);
+}
+
+router.startUnmatchedTrackingWorker = startUnmatchedTrackingWorker;
+router._test = { checkUnmatchedTracking, easternParts, buildDigestEmail, parseFedExEmail };
 
 module.exports = router;

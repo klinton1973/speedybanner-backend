@@ -166,6 +166,9 @@ function buildCustomerEmail(order) {
       <div style="background:#fff;padding:32px;border:1px solid #e5e7eb;border-top:none">
         <h2 style="color:#15803d;margin:0 0 8px">✅ Your order is confirmed!</h2>
         <p style="color:#374151;margin:0 0 24px">Thanks for your order. We'll start printing right away and ship overnight via FedEx.</p>
+        <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:12px 16px;margin:0 0 24px;font-size:13px;color:#78350f">
+          <strong>Please inspect your order when it arrives.</strong> Any printing error or shipping damage must be reported within <strong>48 hours of delivery</strong> &mdash; just reply to this email with photos and we'll make it right.
+        </div>
 
         <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:14px 18px;margin-bottom:24px">
           <strong>Order #${order.id}</strong> &nbsp;·&nbsp; Paid $${(order.amount_cents / 100).toFixed(2)} &nbsp;·&nbsp; Ships next business day
@@ -258,6 +261,11 @@ function buildAdminEmail(order) {
       </div>
       <div style="background:#fff;padding:28px;border:1px solid #e5e7eb;border-top:none">
 
+        <div style="margin-bottom:16px;padding:10px 14px;border-radius:6px;font-size:13px;${order.terms_accepted_at ? 'background:#f0fdf4;color:#15803d' : 'background:#fef2f2;color:#b91c1c'}">
+          ${order.terms_accepted_at
+            ? `✔ Customer approved artwork &amp; accepted Terms at checkout (${new Date(order.terms_accepted_at).toLocaleString('en-US', { timeZone: 'America/New_York' })} ET${order.terms_version ? `, terms ${order.terms_version}` : ''})`
+            : '⚠ No checkout agreement recorded for this order'}
+        </div>
         <div style="display:flex;gap:20px;margin-bottom:24px;flex-wrap:wrap">
           <div style="flex:1;min-width:200px;background:#fef3cd;border-radius:6px;padding:14px 18px">
             <div style="font-size:11px;color:#92400e;text-transform:uppercase;font-weight:700;margin-bottom:6px">Site</div>

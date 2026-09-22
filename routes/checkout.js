@@ -71,12 +71,28 @@ router.get('/saved-cards', async (req, res) => {
 
 // POST /checkout/create-payment-intent
 // Body: { items, customerEmail, shippingAddress, fileKey, discountCents,
-//          saveCard, savedPaymentMethodId }
+//          saveCard, savedPaymentMethodId, termsAccepted, termsVersion }
 // Returns: { clientSecret, orderId } for paid orders
 //          { free: true, orderId }   for $0 coupon orders
 router.post('/create-payment-intent', async (req, res) => {
   const { items, customerEmail, shippingAddress, fileKey, discountCents = 0, saveCard, savedPaymentMethodId } = req.body;
   const site = siteNameFromOrigin(req.headers.origin);
+
+  // Checkout agreement: the customer ticked "I've checked my artwork… and agree
+  // to the Terms of Use" before paying. Recorded with the order (and on the
+  // Stripe payment) as dispute evidence. Not enforced here so a site that
+  // hasn't been updated yet can still take orders — the checkbox itself is
+  // required on the page.
+  const termsAcceptedAt = req.body.termsAccepted === true ? new Date().toISOString() : null;
+  const termsRecord = {
+    terms_accepted_at: termsAcceptedAt,
+    terms_version: termsAcceptedAt ? String(req.body.termsVersion || '').slice(0, 40) || null : null,
+    terms_ip: termsAcceptedAt ? String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim().slice(0, 64) || null : null,
+    terms_user_agent: termsAcceptedAt ? String(req.headers['user-agent'] || '').slice(0, 300) || null : null,
+  };
+  const termsMetadata = termsAcceptedAt
+    ? `yes ${termsAcceptedAt} (terms ${termsRecord.terms_version || 'n/a'})`
+    : 'no';
 
   console.log(`[checkout] request from ${customerEmail} on ${site}, items: ${items?.length}, discountCents: ${discountCents}`);
 
@@ -113,6 +129,7 @@ router.post('/create-payment-intent', async (req, res) => {
           status: 'paid',
           paid_at: new Date().toISOString(),
           site,
+          ...termsRecord,
         })
         .select()
         .single();
@@ -151,7 +168,7 @@ router.post('/create-payment-intent', async (req, res) => {
       amount,
       currency: 'usd',
       receipt_email: customerEmail,
-      metadata: { customerEmail },
+      metadata: { customerEmail, terms_accepted: termsMetadata },
     };
     if (stripeCustomerId) paymentIntentParams.customer = stripeCustomerId;
     if (saveCard) paymentIntentParams.setup_future_usage = 'off_session';
@@ -170,6 +187,7 @@ router.post('/create-payment-intent', async (req, res) => {
         amount_cents: amount,
         status: 'pending',
         site,
+        ...termsRecord,
       })
       .select()
       .single();
@@ -178,7 +196,7 @@ router.post('/create-payment-intent', async (req, res) => {
     console.log(`[checkout] paid order saved: ${order.id}`);
 
     await stripe.paymentIntents.update(paymentIntent.id, {
-      metadata: { customerEmail, orderId: order.id },
+      metadata: { customerEmail, orderId: order.id, terms_accepted: termsMetadata },
     });
 
     res.json({ clientSecret: paymentIntent.client_secret, orderId: order.id });

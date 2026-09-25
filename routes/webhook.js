@@ -67,7 +67,7 @@ router.post('/', async (req, res) => {
     const notifyTo = process.env.NOTIFY_EMAIL;
     if (notifyTo) {
       const attachments = await buildAttachmentsForOrder(order);
-      const adminSubject = `🖨️ NEW ORDER #${order.id} — [${order.site || 'SpeedyBanner'}] — $${(order.amount_cents / 100).toFixed(2)} — ${order.customer_email}`;
+      const adminSubject = `🖨️ NEW ORDER ${orderRef(order)} — [${order.site || 'SpeedyBanner'}] — $${(order.amount_cents / 100).toFixed(2)} — ${order.customer_email}`;
 
       try {
         const { error } = await resend.emails.send({
@@ -132,6 +132,14 @@ async function buildAttachmentsForOrder(order) {
     }
   }
   return attachments;
+}
+
+// The sequential order number shown on the internal sale notification. The
+// database assigns it the moment an order is paid (see order_number_migration.sql),
+// so only paid orders carry one and the highest number is the lifetime order count.
+// Older orders placed before numbering existed fall back to a short id.
+function orderRef(order) {
+  return order.order_number ? `#${order.order_number}` : `#${String(order.id).slice(0, 8)}`;
 }
 
 function escapeHtml(s) {
@@ -257,7 +265,7 @@ function buildAdminEmail(order) {
     <div style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;color:#1a1a2e">
       <div style="background:#dc2020;padding:20px 28px;border-radius:8px 8px 0 0">
         <h1 style="color:#fff;margin:0;font-size:22px">🖨️ NEW PRINT ORDER</h1>
-        <p style="color:rgba(255,255,255,.9);margin:4px 0 0;font-size:14px">Order #${order.id} · $${(order.amount_cents / 100).toFixed(2)} · PAID</p>
+        <p style="color:rgba(255,255,255,.9);margin:4px 0 0;font-size:14px">Order ${orderRef(order)} · $${(order.amount_cents / 100).toFixed(2)} · PAID</p>
       </div>
       <div style="background:#fff;padding:28px;border:1px solid #e5e7eb;border-top:none">
 
@@ -319,3 +327,4 @@ module.exports = router;
 module.exports.buildCustomerEmail = buildCustomerEmail;
 module.exports.buildAdminEmail = buildAdminEmail;
 module.exports.buildAttachmentsForOrder = buildAttachmentsForOrder;
+module.exports.orderRef = orderRef;

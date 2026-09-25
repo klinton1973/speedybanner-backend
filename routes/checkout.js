@@ -209,7 +209,7 @@ router.post('/create-payment-intent', async (req, res) => {
 
 // Shared email sending used by free orders (paid orders use the webhook)
 async function sendOrderEmails(order) {
-  const { buildCustomerEmail, buildAdminEmail, buildAttachmentsForOrder } = require('./webhook');
+  const { buildCustomerEmail, buildAdminEmail, buildAttachmentsForOrder, orderRef } = require('./webhook');
 
   try {
     const { error } = await resend.emails.send({
@@ -233,7 +233,7 @@ async function sendOrderEmails(order) {
       const { error } = await resend.emails.send({
         from: 'SpeedyBanner Orders <orders@speedybanner.com>',
         to: notifyTo,
-        subject: `🖨️ NEW ORDER #${order.id} — [${order.site || 'SpeedyBanner'}] — FREE (coupon) — ${order.customer_email}`,
+        subject: `🖨️ NEW ORDER ${orderRef(order)} — [${order.site || 'SpeedyBanner'}] — FREE (coupon) — ${order.customer_email}`,
         html: buildAdminEmail(order),
         attachments,
       });

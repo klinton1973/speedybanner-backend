@@ -145,6 +145,16 @@ async function findSingleMatch({ recipientName, recipientZip, recipientPhone }) 
   if (matches.length === 0) {
     matches = (candidates || []).filter(o => emailHandleMatches(recipientName, o.customer_email));
   }
+  // A shipment to a workplace is labelled with the business ("Northwest
+  // School"), which customers type into the street field ("Northwest School
+  // 506 11th Street"). Accept that only when the zip agrees as well, since a
+  // street line is much looser than a person's name.
+  if (matches.length === 0 && recipientZip) {
+    matches = (candidates || []).filter(o => {
+      const addr = o.shipping_address || {};
+      return String(addr.zip || '').slice(0, 5) === recipientZip && namesMatch(recipientName, addr.street);
+    });
+  }
   // Last resort when neither the name nor the email handle matched (label
   // addressed to a spouse, a business, a nickname...): the phone number the
   // customer typed at checkout, when FedEx printed one on the shipment.
@@ -372,6 +382,6 @@ function startUnmatchedTrackingWorker() {
 }
 
 router.startUnmatchedTrackingWorker = startUnmatchedTrackingWorker;
-router._test = { checkUnmatchedTracking, easternParts, buildDigestEmail, parseFedExEmail, normalizePhone, phonesMatch };
+router._test = { checkUnmatchedTracking, easternParts, buildDigestEmail, parseFedExEmail, normalizePhone, phonesMatch, findSingleMatch };
 
 module.exports = router;

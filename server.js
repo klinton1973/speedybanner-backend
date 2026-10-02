@@ -21,6 +21,7 @@ app.use('/admin',    require('./routes/admin'));
 const trackingRouter = require('./routes/tracking');
 app.use('/tracking', trackingRouter);
 trackingRouter.startUnmatchedTrackingWorker();
+require('./routes/abandoned').startAbandonedCheckoutWorker();
 
 app.listen(process.env.PORT, () => {
   console.log(`Server running on port ${process.env.PORT}`);

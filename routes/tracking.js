@@ -27,6 +27,7 @@ function parseFedExEmail(text) {
 
   let recipientName = null;
   let recipientZip = null;
+  let recipientPhone = null;
   const toIdx = lines.findIndex(l => /^to$/i.test(l));
   if (toIdx !== -1) {
     const block = [];
@@ -39,9 +40,42 @@ function parseFedExEmail(text) {
     if (block.length > 0) recipientName = block[0];
     const zipLine = block.find(l => /^\d{5}(-\d{4})?$/.test(l));
     if (zipLine) recipientZip = zipLine.slice(0, 5);
+
+    // The recipient's phone, when FedEx prints it, sits in the same "To" block
+    // (or just under it), on its own line or after a "Phone"/"Tel" label.
+    // Scan from "To" up to the next field label so a number elsewhere in the
+    // email (FedEx's own support line, the tracking number) is never taken.
+    for (let i = toIdx + 1; i < lines.length; i++) {
+      const line = lines[i];
+      if (/^(ship date|number of pieces|total shipment weight|service|reference)$/i.test(line)) break;
+      const candidate = line.replace(/^(phone|tel|telephone|ph)\.?:?\s*/i, '');
+      // Must be shaped like a phone number, not merely contain ten digits —
+      // "12345 Highway 67890" is a street line, not a phone.
+      if (!PHONE_SHAPE.test(candidate)) continue;
+      const phone = normalizePhone(candidate);
+      if (phone && phone !== trackingNumber) { recipientPhone = phone; break; }
+    }
   }
 
-  return { trackingNumber, recipientName, recipientZip };
+  return { trackingNumber, recipientName, recipientZip, recipientPhone };
+}
+
+const PHONE_SHAPE = /^(\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}$/;
+
+// Reduces any US phone spelling to its 10 digits ("(347) 422-6637",
+// "+1 347.422.6637", "1-347-422-6637" all become "3474226637"), or null when
+// the text is not a phone number at all.
+function normalizePhone(s) {
+  const digits = String(s || '').replace(/\D/g, '');
+  if (digits.length === 10) return digits;
+  if (digits.length === 11 && digits[0] === '1') return digits.slice(1);
+  return null;
+}
+
+function phonesMatch(fedexPhone, orderPhone) {
+  const a = normalizePhone(fedexPhone);
+  const b = normalizePhone(orderPhone);
+  return !!a && !!b && a === b;
 }
 
 const normalizeName = s => (s || '').toLowerCase().replace(/[^a-z\s]/g, '').trim();
@@ -93,7 +127,7 @@ function buildShippedEmail(order, trackingNumber, isAdditionalPackage) {
 
 // Returns the single order this FedEx shipment belongs to, or null if there's
 // no match or it's ambiguous (different customers sharing a name/zip).
-async function findSingleMatch({ recipientName, recipientZip }) {
+async function findSingleMatch({ recipientName, recipientZip, recipientPhone }) {
   // Include already-'shipped' orders too — multi-item orders often ship as
   // separate FedEx packages, each with its own tracking number, arriving
   // as separate emails after the order's first package already matched.
@@ -109,9 +143,19 @@ async function findSingleMatch({ recipientName, recipientZip }) {
   if (matches.length === 0) {
     matches = (candidates || []).filter(o => emailHandleMatches(recipientName, o.customer_email));
   }
+  // Last resort when neither the name nor the email handle matched (label
+  // addressed to a spouse, a business, a nickname...): the phone number the
+  // customer typed at checkout, when FedEx printed one on the shipment.
+  if (matches.length === 0 && recipientPhone) {
+    matches = (candidates || []).filter(o => phonesMatch(recipientPhone, (o.shipping_address || {}).phone));
+  }
   if (matches.length > 1 && recipientZip) {
     const zipMatches = matches.filter(o => String((o.shipping_address || {}).zip || '').slice(0, 5) === recipientZip);
     if (zipMatches.length >= 1) matches = zipMatches;
+  }
+  if (matches.length > 1 && recipientPhone) {
+    const phoneMatches = matches.filter(o => phonesMatch(recipientPhone, (o.shipping_address || {}).phone));
+    if (phoneMatches.length >= 1) matches = phoneMatches;
   }
   // Still ambiguous, but every remaining candidate belongs to the same
   // customer (e.g. two simultaneous orders) — per Klinton, default to the
@@ -169,13 +213,13 @@ router.post('/fedex', async (req, res) => {
     const text = req.body && req.body.data && req.body.data.text;
     if (!text) { console.error('Tracking webhook: no text body in payload'); return; }
 
-    const { trackingNumber, recipientName, recipientZip } = parseFedExEmail(text);
+    const { trackingNumber, recipientName, recipientZip, recipientPhone } = parseFedExEmail(text);
     if (!trackingNumber || !recipientName) {
       console.error('Tracking webhook: could not parse tracking number/recipient from email', { trackingNumber, recipientName });
       return;
     }
 
-    const order = await findSingleMatch({ trackingNumber, recipientName, recipientZip });
+    const order = await findSingleMatch({ trackingNumber, recipientName, recipientZip, recipientPhone });
     if (order) {
       await applyTrackingToOrder(order, trackingNumber);
       return;
@@ -191,6 +235,7 @@ router.post('/fedex', async (req, res) => {
         tracking_number: trackingNumber,
         recipient_name: recipientName,
         recipient_zip: recipientZip,
+        recipient_phone: recipientPhone,
       }, { onConflict: 'tracking_number', ignoreDuplicates: true });
     if (queueError) throw queueError;
   } catch (err) {
@@ -266,7 +311,7 @@ async function checkUnmatchedTracking(now = new Date()) {
     const stillUnmatched = [];
     for (const row of pending || []) {
       const order = await findSingleMatch({
-        trackingNumber: row.tracking_number, recipientName: row.recipient_name, recipientZip: row.recipient_zip,
+        trackingNumber: row.tracking_number, recipientName: row.recipient_name, recipientZip: row.recipient_zip, recipientPhone: row.recipient_phone,
       });
       if (order) {
         await applyTrackingToOrder(order, row.tracking_number);
@@ -325,6 +370,6 @@ function startUnmatchedTrackingWorker() {
 }
 
 router.startUnmatchedTrackingWorker = startUnmatchedTrackingWorker;
-router._test = { checkUnmatchedTracking, easternParts, buildDigestEmail, parseFedExEmail };
+router._test = { checkUnmatchedTracking, easternParts, buildDigestEmail, parseFedExEmail, normalizePhone, phonesMatch };
 
 module.exports = router;

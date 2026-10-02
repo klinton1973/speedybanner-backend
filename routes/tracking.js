@@ -48,11 +48,13 @@ function parseFedExEmail(text) {
     for (let i = toIdx + 1; i < lines.length; i++) {
       const line = lines[i];
       if (/^(ship date|number of pieces|total shipment weight|service|reference)$/i.test(line)) break;
-      const candidate = line.replace(/^(phone|tel|telephone|ph)\.?:?\s*/i, '');
       // Must be shaped like a phone number, not merely contain ten digits —
-      // "12345 Highway 67890" is a street line, not a phone.
-      if (!PHONE_SHAPE.test(candidate)) continue;
-      const phone = normalizePhone(candidate);
+      // "12345 Highway 67890" is a street line, not a phone. FedEx sometimes
+      // puts the phone on the name line itself ("(972)467-4146" as the whole
+      // recipient, or "Craig Nelson Cell 612 387-1081"), so look inside the line.
+      const m = line.match(PHONE_SHAPE);
+      if (!m) continue;
+      const phone = normalizePhone(m[0]);
       if (phone && phone !== trackingNumber) { recipientPhone = phone; break; }
     }
   }
@@ -60,7 +62,7 @@ function parseFedExEmail(text) {
   return { trackingNumber, recipientName, recipientZip, recipientPhone };
 }
 
-const PHONE_SHAPE = /^(\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}$/;
+const PHONE_SHAPE = /(?<!\d)(\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?!\d)/;
 
 // Reduces any US phone spelling to its 10 digits ("(347) 422-6637",
 // "+1 347.422.6637", "1-347-422-6637" all become "3474226637"), or null when

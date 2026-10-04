@@ -16,6 +16,8 @@ const SITES = {
   'www.holyprinter.com':      'HolyPrinter.com',
     'varsitybanner.com': 'VarsityBanner.com',
     'www.varsitybanner.com': 'VarsityBanner.com',
+  'gamefacebanners.com':      'GameFaceBanners.com',
+  'www.gamefacebanners.com':  'GameFaceBanners.com',
   'rushorderbanners.com':     'RushOrderBanners.com',
   'www.rushorderbanners.com': 'RushOrderBanners.com',
 };

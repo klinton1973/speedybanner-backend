@@ -15,10 +15,10 @@ const r2 = new S3Client({
 
 // POST /upload/file
 // Headers: Content-Type (file mime type), X-Filename (original filename)
-// Body: raw file bytes (up to 50 MB)
+// Body: raw file bytes (up to 150 MB)
 // Returns: { fileKey, publicUrl }
 router.post('/file',
-  express.raw({ type: '*/*', limit: '50mb' }),
+  express.raw({ type: '*/*', limit: '150mb' }),
   async (req, res) => {
     const originalName = req.headers['x-filename'] || 'upload.bin';
     const contentType  = req.headers['content-type'] || 'application/octet-stream';

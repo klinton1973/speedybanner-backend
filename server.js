@@ -22,8 +22,12 @@ app.use('/webhook',  require('./routes/webhook'));
 app.use('/admin',    require('./routes/admin'));
 const trackingRouter = require('./routes/tracking');
 app.use('/tracking', trackingRouter);
-trackingRouter.startUnmatchedTrackingWorker();
-require('./routes/abandoned').startAbandonedCheckoutWorker();
+// Background workers email real customers. Never start them in local test mode, so a test
+// run against the live database cannot send reminders or digests.
+if (process.env.ALLOW_LOCAL_TEST !== '1') {
+  trackingRouter.startUnmatchedTrackingWorker();
+  require('./routes/abandoned').startAbandonedCheckoutWorker();
+}
 
 // Local sandbox test page — only served when you run the server yourself with ALLOW_LOCAL_TEST=1.
 if (process.env.ALLOW_LOCAL_TEST === '1') {

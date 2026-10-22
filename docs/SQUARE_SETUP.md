@@ -12,8 +12,8 @@ keeps working exactly as before. Do these steps in order; stop after any step an
 
 ## 2. Database (Supabase SQL editor — one statement at a time)
 Run `square_migration.sql`. It only adds columns; existing orders and Stripe checkout are unaffected.
-Do this on a **test Supabase project** if you can. If you test against the real one, the sandbox
-orders land in your real `orders` table (delete them afterwards; they are named "TEST 4x2 Vinyl Banner").
+The local test page does not use your database. (If you ever run the server against the real database, sandbox
+orders land in your real `orders` table and must be deleted by hand.)
 
 ## 3. Environment variables
 | Variable | Value |
@@ -27,11 +27,13 @@ orders land in your real `orders` table (delete them afterwards; they are named 
 | `PAYMENT_PROVIDER` | leave unset (= `stripe`). Set to `square` at cutover. |
 
 ## 4. Try it without touching the live sites
-On your own computer: copy `.env.example`-style values into a local `.env` (the same variables the
-server already uses, plus the ones above, plus `ALLOW_LOCAL_TEST=1` and `PORT=3000`), run
-`npm install` and `npm start`, then open `http://localhost:3000/square-test`.
-Pay with test card `4111 1111 1111 1111`, any future expiry, any CVV/ZIP.
-Other sandbox test cards (declines, bad CVV) are listed in Square's testing docs.
+On your own computer, double-click `START-TEST.bat` (needs Node.js LTS from nodejs.org). The first run creates a
+settings file in Notepad: paste in ONLY the Square sandbox access token. Run it again; it opens
+`http://localhost:3000/square-test`. Pay with test card `4111 1111 1111 1111`, any future expiry, any CVV/ZIP.
+
+Local test mode (`ALLOW_LOCAL_TEST=1`) uses an **in-memory database, sends no emails, never touches Stripe** and
+starts none of the background workers. Your live Supabase is not involved, and no keys for it are needed.
+Only Square's sandbox is contacted, and it moves no real money.
 
 Automated checks (no network, no keys needed): `npm test`.
 

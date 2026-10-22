@@ -1,4 +1,5 @@
 require('dotenv').config();
+if (process.env.ALLOW_LOCAL_TEST === '1') require('./lib/local-test-stubs'); // must run before any route loads
 const express = require('express');
 const cors = require('cors');
 

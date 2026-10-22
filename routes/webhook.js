@@ -51,7 +51,7 @@ router.post('/', async (req, res) => {
         from: `${order.site || 'SpeedyBanner'} <orders@speedybanner.com>`,
         replyTo: replyToForSite(order.site),
         to: customerEmail,
-        subject: `Order Confirmed — ${order.site || 'SpeedyBanner'} #${order.id}`,
+        subject: `${subjectPrefix(order)}Order Confirmed — ${order.site || 'SpeedyBanner'} #${order.id}`,
         html: buildCustomerEmail(order),
       });
       // The Resend SDK resolves (does not throw) on API-level failures like validation
@@ -67,7 +67,7 @@ router.post('/', async (req, res) => {
     const notifyTo = process.env.NOTIFY_EMAIL;
     if (notifyTo) {
       const attachments = await buildAttachmentsForOrder(order);
-      const adminSubject = `🖨️ NEW ORDER ${orderRef(order)} — [${order.site || 'SpeedyBanner'}] — $${(order.amount_cents / 100).toFixed(2)} — ${order.customer_email}`;
+      const adminSubject = `${subjectPrefix(order)}🖨️ NEW ORDER ${orderRef(order)} — [${order.site || 'SpeedyBanner'}] — $${(order.amount_cents / 100).toFixed(2)} — ${order.customer_email}`;
 
       try {
         const { error } = await resend.emails.send({
@@ -146,6 +146,47 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+// Shipping upgrades chosen on the product page travel inside each item's free-text
+// details ("… · 📦 Saturday Delivery (+$35)"), or as a separate "Saturday Delivery Upgrade"
+// line when picked at checkout. Buried at the end of a long specs string they were easy to
+// miss, so they are pulled out here for the subject line and a banner at the top of the email.
+function shippingFlags(order) {
+  const items = order.items || [];
+  const text = items.map(i => `${i.name || ''} ${i.details || ''}`).join(' | ');
+  return {
+    saturday: /saturday delivery/i.test(text),
+    rush: /same-day|rush shipping/i.test(text),
+  };
+}
+
+function subjectPrefix(order) {
+  const f = shippingFlags(order);
+  return (f.saturday ? '⚡ SATURDAY DELIVERY — ' : '') + (f.rush ? '🚨 SAME-DAY — ' : '');
+}
+
+function buildShippingBanner(order, forCustomer) {
+  const f = shippingFlags(order);
+  if (!f.saturday && !f.rush) return '';
+  const lines = [];
+  if (f.saturday) lines.push(`<div style="font-size:16px;font-weight:800;color:#92400e">⚡ SATURDAY DELIVERY${forCustomer ? '' : ' — $35 upgrade paid'}</div><div style="color:#78350f;font-size:13px">${forCustomer ? 'Your order is scheduled to arrive this Saturday.' : 'Customer paid for Saturday arrival. Ship so FedEx delivers Saturday.'}</div>`);
+  if (f.rush) lines.push(`<div style="font-size:16px;font-weight:800;color:#991b1b">🚨 SAME-DAY / RUSH SHIPPING</div><div style="color:#7f1d1d;font-size:13px">${forCustomer ? 'Your order ships today.' : 'Customer paid the rush fee. Print and ship today.'}</div>`);
+  return `<div style="background:#fef3c7;border:3px solid #f59e0b;border-radius:8px;padding:14px 18px;margin-bottom:20px">${lines.join('<div style="height:8px"></div>')}</div>`;
+}
+
+// Specs arrive as one " · "-separated string; one segment per line reads far better in
+// the email and lets the shipping upgrades stand out instead of trailing a long file URL.
+function formatDetails(details) {
+  if (!details) return '';
+  return String(details).split(' · ').map(seg => {
+    const s = seg.trim();
+    if (!s) return '';
+    if (/saturday delivery|same-day|rush shipping/i.test(s)) {
+      return `<div style="font-weight:800;color:#b45309">${s}</div>`;
+    }
+    return `<div>${s}</div>`;
+  }).join('');
+}
+
 function buildNotesSection(order) {
   const notes = (order.shipping_address || {}).notes;
   if (!notes) return '';
@@ -159,11 +200,12 @@ function buildCustomerEmail(order) {
   const items = (order.items || [])
     .map(i => `<tr>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb">${i.name}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;color:#475569">${i.details || ''}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;color:#475569">${formatDetails(i.details)}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:center">${i.qty || 1}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700">$${Number(i.totalPrice).toFixed(2)}</td>
     </tr>`)
     .join('');
+  const flags = shippingFlags(order);
 
   return `
     <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#1a1a2e">
@@ -179,8 +221,9 @@ function buildCustomerEmail(order) {
         </div>
 
         <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:14px 18px;margin-bottom:24px">
-          <strong>Order #${order.id}</strong> &nbsp;·&nbsp; Paid $${(order.amount_cents / 100).toFixed(2)} &nbsp;·&nbsp; Ships next business day
+          <strong>Order #${order.id}</strong> &nbsp;·&nbsp; Paid $${(order.amount_cents / 100).toFixed(2)} &nbsp;·&nbsp; ${flags.rush ? 'Ships today' : 'Ships next business day'}${flags.saturday ? ' &nbsp;·&nbsp; Saturday delivery' : ''}
         </div>
+        ${buildShippingBanner(order, true)}
 
         <h3 style="color:#1a3fa8;margin:0 0 12px;font-size:15px;border-bottom:2px solid #e5e7eb;padding-bottom:6px">📦 What You Ordered</h3>
         <table style="width:100%;border-collapse:collapse;margin-bottom:24px;font-size:14px">
@@ -253,7 +296,7 @@ function buildAdminEmail(order) {
   const items = (order.items || [])
     .map(i => `<tr>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-weight:600">${i.name}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;color:#475569">${i.details || ''}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;color:#475569">${formatDetails(i.details)}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:center">${i.qty || 1}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700">$${Number(i.totalPrice).toFixed(2)}</td>
     </tr>`)
@@ -268,6 +311,7 @@ function buildAdminEmail(order) {
         <p style="color:rgba(255,255,255,.9);margin:4px 0 0;font-size:14px">Order ${orderRef(order)} · $${(order.amount_cents / 100).toFixed(2)} · PAID</p>
       </div>
       <div style="background:#fff;padding:28px;border:1px solid #e5e7eb;border-top:none">
+        ${buildShippingBanner(order, false)}
 
         <div style="margin-bottom:16px;padding:10px 14px;border-radius:6px;font-size:13px;${order.terms_accepted_at ? 'background:#f0fdf4;color:#15803d' : 'background:#fef2f2;color:#b91c1c'}">
           ${order.terms_accepted_at
@@ -328,3 +372,4 @@ module.exports.buildCustomerEmail = buildCustomerEmail;
 module.exports.buildAdminEmail = buildAdminEmail;
 module.exports.buildAttachmentsForOrder = buildAttachmentsForOrder;
 module.exports.orderRef = orderRef;
+module.exports.subjectPrefix = subjectPrefix;

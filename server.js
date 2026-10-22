@@ -16,12 +16,19 @@ app.use(express.json({ limit: '10mb' }));
 
 app.use('/upload',   require('./routes/upload'));
 app.use('/checkout', require('./routes/checkout'));
+app.use('/checkout', require('./routes/square'));       // Square checkout (inert until SQUARE_* env vars are set)
+app.use('/webhook/square', require('./routes/square-webhook'));
 app.use('/webhook',  require('./routes/webhook'));
 app.use('/admin',    require('./routes/admin'));
 const trackingRouter = require('./routes/tracking');
 app.use('/tracking', trackingRouter);
 trackingRouter.startUnmatchedTrackingWorker();
 require('./routes/abandoned').startAbandonedCheckoutWorker();
+
+// Local sandbox test page — only served when you run the server yourself with ALLOW_LOCAL_TEST=1.
+if (process.env.ALLOW_LOCAL_TEST === '1') {
+  app.get('/square-test', (req, res) => res.sendFile(require('path').join(__dirname, 'test', 'square-sandbox.html')));
+}
 
 app.listen(process.env.PORT, () => {
   console.log(`Server running on port ${process.env.PORT}`);

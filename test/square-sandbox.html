@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Square sandbox test</title>
+<style>body{font-family:Arial,sans-serif;max-width:480px;margin:40px auto;padding:0 16px}
+#card{margin:16px 0}button{padding:12px 20px;font-size:16px;cursor:pointer}pre{background:#f3f4f6;padding:12px;white-space:pre-wrap}</style>
+</head><body>
+<h2>Square sandbox test checkout</h2>
+<p>Test item: <strong>4x2 vinyl banner — $40.00</strong>. Use Square's sandbox test card <code>4111 1111 1111 1111</code>, any future date, any CVV and ZIP.</p>
+<label>Email <input id="email" value="test@example.com"></label>
+<div id="card"></div>
+<button id="pay" disabled>Pay $40.00</button>
+<pre id="out">Loading…</pre>
+<script>
+const out = t => document.getElementById('out').textContent = typeof t === 'string' ? t : JSON.stringify(t, null, 2);
+(async () => {
+  const cfg = await (await fetch('/checkout/config')).json();
+  if (!cfg.square) return out('Square is not configured on the server (need SQUARE_ACCESS_TOKEN, SQUARE_LOCATION_ID, SQUARE_APPLICATION_ID).');
+  const s = document.createElement('script');
+  s.src = cfg.square.environment === 'production' ? 'https://web.squarecdn.com/v1/square.js' : 'https://sandbox.web.squarecdn.com/v1/square.js';
+  s.onload = async () => {
+    const payments = Square.payments(cfg.square.applicationId, cfg.square.locationId);
+    const card = await payments.card();
+    await card.attach('#card');
+    const btn = document.getElementById('pay');
+    btn.disabled = false; out('Ready (' + cfg.square.environment + ').');
+    btn.onclick = async () => {
+      btn.disabled = true; out('Processing…');
+      const t = await card.tokenize();
+      if (t.status !== 'OK') { btn.disabled = false; return out(t.errors || 'Could not read card'); }
+      const r = await fetch('/checkout/square-pay', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: [{ name: 'TEST 4x2 Vinyl Banner', details: 'sandbox test', totalPrice: 40 }],
+          customerEmail: document.getElementById('email').value,
+          shippingAddress: { name: 'Test Buyer', street: '1 Test St', city: 'Lexington', state: 'KY', zip: '40507', phone: '5555555555' },
+          sourceId: t.token, termsAccepted: true, termsVersion: 'sandbox-test'
+        })
+      });
+      out({ httpStatus: r.status, body: await r.json() }); btn.disabled = false;
+    };
+  };
+  document.head.appendChild(s);
+})().catch(e => out(String(e)));
+</script></body></html>

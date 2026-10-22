@@ -25,80 +25,91 @@ router.post('/', async (req, res) => {
   if (event.type === 'payment_intent.succeeded') {
     const pi = event.data.object;
     const { orderId, customerEmail } = pi.metadata;
-
-    // Mark order paid
-    let order;
-    try {
-      const { data, error } = await supabase
-        .from('orders')
-        .update({ status: 'paid', paid_at: new Date().toISOString() })
-        .eq('id', orderId)
-        .select()
-        .single();
-
-      if (error) throw error;
-      order = data;
-    } catch (err) {
-      console.error(`Order update failed for order #${orderId}:`, err);
-      // Still return 200 so Stripe does not retry — nothing else can proceed without the order row
-      return res.json({ received: true });
-    }
-
-    // Confirmation email to customer — isolated so a failure here can never block the internal
-    // sale notification below (previously both lived in one try/catch and shared one failure point)
-    try {
-      const { error } = await resend.emails.send({
-        from: `${order.site || 'SpeedyBanner'} <orders@speedybanner.com>`,
-        replyTo: replyToForSite(order.site),
-        to: customerEmail,
-        subject: `${subjectPrefix(order)}Order Confirmed — ${order.site || 'SpeedyBanner'} #${order.id}`,
-        html: buildCustomerEmail(order),
-      });
-      // The Resend SDK resolves (does not throw) on API-level failures like validation
-      // errors — it reports them via this `error` field, so it must be checked explicitly.
-      if (error) throw error;
-    } catch (err) {
-      console.error(`Customer confirmation email failed for order #${order.id}:`, err);
-    }
-
-    // Internal print/work order notification — isolated from the customer email above, and
-    // falls back to sending without attachments if the attachment-laden send fails, so a bad
-    // design file can never fully silence the sale notification
-    const notifyTo = process.env.NOTIFY_EMAIL;
-    if (notifyTo) {
-      const attachments = await buildAttachmentsForOrder(order);
-      const adminSubject = `${subjectPrefix(order)}🖨️ NEW ORDER ${orderRef(order)} — [${order.site || 'SpeedyBanner'}] — $${(order.amount_cents / 100).toFixed(2)} — ${order.customer_email}`;
-
-      try {
-        const { error } = await resend.emails.send({
-          from: 'SpeedyBanner Orders <orders@speedybanner.com>',
-          to: notifyTo,
-          subject: adminSubject,
-          html: buildAdminEmail(order),
-          attachments,
-        });
-        if (error) throw error;
-      } catch (err) {
-        console.error(`Admin order notification failed for order #${order.id} (attachments: ${attachments.length}):`, err);
-        if (attachments.length > 0) {
-          try {
-            const { error: fallbackError } = await resend.emails.send({
-              from: 'SpeedyBanner Orders <orders@speedybanner.com>',
-              to: notifyTo,
-              subject: `${adminSubject} [attachments failed — see file links in email]`,
-              html: buildAdminEmail(order),
-            });
-            if (fallbackError) throw fallbackError;
-          } catch (fallbackErr) {
-            console.error(`Admin order notification fallback (no attachments) also failed for order #${order.id}:`, fallbackErr);
-          }
-        }
-      }
-    }
+    await finalizePaidOrder(orderId, { customerEmail });
   }
 
   res.json({ received: true });
 });
+
+// Marks an order paid and sends the customer confirmation plus the internal print-order
+// notification. Shared by the Stripe webhook and the Square charge/webhook routes so both
+// processors produce identical emails. Returns the order, or null if it could not be marked paid
+// (or, with onlyIfPending, was already paid).
+async function finalizePaidOrder(orderId, { customerEmail, extraFields = {}, onlyIfPending = false } = {}) {
+  // Mark order paid
+  let order;
+  try {
+    let query = supabase
+      .from('orders')
+      .update({ status: 'paid', paid_at: new Date().toISOString(), ...extraFields })
+      .eq('id', orderId);
+    // Square can report the same payment twice (our own charge call and its webhook),
+    // so that path only flips an order that is still pending — and sends emails once.
+    if (onlyIfPending) query = query.eq('status', 'pending');
+    const { data, error } = await query.select().maybeSingle();
+
+    if (error) throw error;
+    if (!data) return null;
+    order = data;
+  } catch (err) {
+    console.error(`Order update failed for order #${orderId}:`, err);
+    // Callers still return 200 so the processor does not retry — nothing else can proceed without the order row
+    return null;
+  }
+
+  // Confirmation email to customer — isolated so a failure here can never block the internal
+  // sale notification below (previously both lived in one try/catch and shared one failure point)
+  try {
+    const { error } = await resend.emails.send({
+      from: `${order.site || 'SpeedyBanner'} <orders@speedybanner.com>`,
+      replyTo: replyToForSite(order.site),
+      to: customerEmail || order.customer_email,
+      subject: `${subjectPrefix(order)}Order Confirmed — ${order.site || 'SpeedyBanner'} #${order.id}`,
+      html: buildCustomerEmail(order),
+    });
+    // The Resend SDK resolves (does not throw) on API-level failures like validation
+    // errors — it reports them via this `error` field, so it must be checked explicitly.
+    if (error) throw error;
+  } catch (err) {
+    console.error(`Customer confirmation email failed for order #${order.id}:`, err);
+  }
+
+  // Internal print/work order notification — isolated from the customer email above, and
+  // falls back to sending without attachments if the attachment-laden send fails, so a bad
+  // design file can never fully silence the sale notification
+  const notifyTo = process.env.NOTIFY_EMAIL;
+  if (notifyTo) {
+    const attachments = await buildAttachmentsForOrder(order);
+    const adminSubject = `${subjectPrefix(order)}🖨️ NEW ORDER ${orderRef(order)} — [${order.site || 'SpeedyBanner'}] — $${(order.amount_cents / 100).toFixed(2)} — ${order.customer_email}`;
+
+    try {
+      const { error } = await resend.emails.send({
+        from: 'SpeedyBanner Orders <orders@speedybanner.com>',
+        to: notifyTo,
+        subject: adminSubject,
+        html: buildAdminEmail(order),
+        attachments,
+      });
+      if (error) throw error;
+    } catch (err) {
+      console.error(`Admin order notification failed for order #${order.id} (attachments: ${attachments.length}):`, err);
+      if (attachments.length > 0) {
+        try {
+          const { error: fallbackError } = await resend.emails.send({
+            from: 'SpeedyBanner Orders <orders@speedybanner.com>',
+            to: notifyTo,
+            subject: `${adminSubject} [attachments failed — see file links in email]`,
+            html: buildAdminEmail(order),
+          });
+          if (fallbackError) throw fallbackError;
+        } catch (fallbackErr) {
+          console.error(`Admin order notification fallback (no attachments) also failed for order #${order.id}:`, fallbackErr);
+        }
+      }
+    }
+  }
+  return order;
+}
 
 // Collects every distinct fileKey across the order's line items (plus the legacy
 // top-level file_key, for orders placed before per-item fileKey was sent) and
@@ -361,13 +372,14 @@ function buildAdminEmail(order) {
 
         ${buildNotesSection(order)}
 
-        <p style="font-size:12px;color:#9ca3af;margin:0">Stripe Payment Intent: ${order.stripe_payment_intent_id}</p>
+        <p style="font-size:12px;color:#9ca3af;margin:0">${order.payment_provider === 'square' ? `Square Payment: ${order.square_payment_id}` : `Stripe Payment Intent: ${order.stripe_payment_intent_id}`}</p>
       </div>
     </div>
   `;
 }
 
 module.exports = router;
+module.exports.finalizePaidOrder = finalizePaidOrder;
 module.exports.buildCustomerEmail = buildCustomerEmail;
 module.exports.buildAdminEmail = buildAdminEmail;
 module.exports.buildAttachmentsForOrder = buildAttachmentsForOrder;

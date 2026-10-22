@@ -245,3 +245,5 @@ async function sendOrderEmails(order) {
 }
 
 module.exports = router;
+module.exports.PRICES = PRICES;
+module.exports.sendOrderEmails = sendOrderEmails;

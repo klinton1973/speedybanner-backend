@@ -75,5 +75,6 @@ open('./app.js','w',encoding='utf-8').write(js)
 
 # html: relative app.js so it loads the patched copy
 html=rep(html,'src="/app.js?v=39f9382c"','src="app.js"')
+html=rep(html,'href="/app.css?v=fa9ea8e7"','href="https://speedybanner.com/app.css?v=fa9ea8e7"')
 open('./index.html','w',encoding='utf-8').write(html)
 print('ok')

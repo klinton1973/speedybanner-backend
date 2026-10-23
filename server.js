@@ -33,6 +33,15 @@ if (process.env.ALLOW_LOCAL_TEST !== '1') {
 // Local sandbox test page — only served when you run the server yourself with ALLOW_LOCAL_TEST=1.
 if (process.env.ALLOW_LOCAL_TEST === '1') {
   app.use('/store-test', express.static(require('path').join(__dirname, 'storefront-square-test'), { index: 'index.html' }));
+  // Test copy only: pull images/fonts the page asks for (e.g. /images/...) from the live site so it looks right.
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' || !/\/store-test\//.test(req.headers.referer || '')) return next();
+    if (/^\/(checkout|upload|webhook|admin|tracking|store-test|square-test)/.test(req.path)) return next();
+    fetch('https://speedybanner.com' + req.originalUrl).then(async r => {
+      res.status(r.status); const ct = r.headers.get('content-type'); if (ct) res.type(ct);
+      res.send(Buffer.from(await r.arrayBuffer()));
+    }).catch(() => next());
+  });
   app.get('/square-test', (req, res) => res.sendFile(require('path').join(__dirname, 'test', 'square-sandbox.html')));
 }
 

@@ -305,6 +305,7 @@ async function sqInitWallets() {
   sqWalletsInit = true;
   host.innerHTML = '<div id="sq-wallets" style="display:flex;flex-direction:column;gap:8px"></div><div id="sq-link-slot" style="display:none;margin-top:8px"></div>';
   const wrap = document.getElementById('sq-wallets');
+  sqInitStripeLink(); // Link does not depend on the Square wallets loading
   const pr = sqPayments.paymentRequest(sqReqOptions());
   sqWalletPR = pr;
   let shown = 0;
@@ -335,7 +336,6 @@ async function sqInitWallets() {
     });
     reveal();
   } catch (e) { console.info('Cash App Pay not available:', e && e.message); }
-  sqInitStripeLink();
 }
 let SQ_ACTIVE = false, sqPayments = null, sqCard = null, sqSourceId = null;
 async function sqLoadConfig() {

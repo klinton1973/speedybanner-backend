@@ -4,6 +4,7 @@
 require('dotenv').config();
 process.env.ALLOW_LOCAL_TEST = '1';
 process.env.SQUARE_ENV = 'sandbox';
+process.env.PAYMENT_PROVIDER = 'square'; // local test only: make the storefront copy use Square
 const readline = require('readline');
 const { exec } = require('child_process');
 

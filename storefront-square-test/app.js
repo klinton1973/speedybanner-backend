@@ -202,6 +202,141 @@ function trackFunnel(eventName, itemList) {
 let stripe, stripeCardElement;
 
 // ===== SQUARE (test copy) =====
+
+// Stripe Link only (Stripe's express button with every other wallet turned off)
+function sqInitStripeLink() {
+  try {
+    loadStripeAndInit(() => {
+      try {
+        if (!stripe) stripe = Stripe(STRIPE_PUBLISHABLE_KEY);
+    // ── Apple Pay / Google Pay / Link / Cash App ────────────────────────────
+    const totalCents = Math.round(getCheckoutTotal() * 100);
+    if (totalCents > 0) {
+      const expressElements = stripe.elements({ mode: 'payment', amount: totalCents, currency: 'usd' });
+      const expressCheckout = expressElements.create('expressCheckout', {
+        buttonHeight: 48,
+        paymentMethods: { applePay: 'never', googlePay: 'never', link: 'auto', cashApp: 'never', amazonPay: 'never', paypal: 'never' }
+      });
+      expressCheckout.mount('#sq-link-slot');
+      expressCheckout.on('loaderror', () => {});
+      expressCheckout.on('ready', ({ availablePaymentMethods }) => {
+        if (availablePaymentMethods && Object.values(availablePaymentMethods).some(Boolean)) {
+          document.getElementById('payment-request-container').style.display = 'block'; var _s=document.getElementById('sq-link-slot'); if(_s) _s.style.display='block';
+        }
+      });
+      expressCheckout.on('confirm', async (ev) => {
+        if (typeof coValidateCheckout === 'function' && !coValidateCheckout(true)) { try { ev.paymentFailed({ reason: 'fail' }); } catch (e) {} return; }
+        if (!(document.getElementById('terms-ack') || {}).checked) { try { ev.paymentFailed({ reason: 'fail' }); } catch (e) {} coTermsMsg(); return; }
+        try {
+          const emailVal = document.getElementById('co-email')?.value.trim() || ev.billingDetails?.email || '';
+          const nameVal  = document.getElementById('co-first')?.value.trim() + ' ' + document.getElementById('co-last')?.value.trim();
+          const expSatCb = document.getElementById('saturday-delivery-cb');
+          const expSatFee = expSatCb && expSatCb.checked && !cartHasSatDelivery() ? 35 : 0;
+          const expDiscount = getCouponDiscount();
+          const res = await fetch(BACKEND_URL + '/checkout/create-payment-intent', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              termsAccepted: !!(document.getElementById('terms-ack') || {}).checked,
+              termsVersion: '2026-09-22',
+              items: expSatFee > 0 ? [...cart.map(i => ({ name: i.name, details: i.details, totalPrice: i.price, fileKey: i.fileKey || null })), { name: 'Saturday Delivery Upgrade', details: 'Weekend rush delivery add-on', totalPrice: expSatFee, qty: 1 }] : cart.map(i => ({ name: i.name, details: i.details, totalPrice: i.price, fileKey: i.fileKey || null })),
+              customerEmail: emailVal,
+              shippingAddress: {
+                name: nameVal.trim() || ev.billingDetails?.name,
+                street: coFullStreet('co-address'),
+                city: document.getElementById('co-city')?.value.trim(),
+                state: document.getElementById('co-state')?.value.trim(),
+                zip: document.getElementById('co-zip')?.value.trim(),
+                phone: document.getElementById('co-phone')?.value.trim()
+              },
+              fileKey: checkoutFileKey || null,
+              discountCents: Math.round(expDiscount * 100)
+            })
+          });
+          const data = await res.json();
+          if (!res.ok) { expressCheckout.update({}); return; }
+          const { error } = await stripe.confirmPayment({
+            elements: expressElements,
+            clientSecret: data.clientSecret,
+            confirmParams: { return_url: window.location.href },
+            redirect: 'if_required'
+          });
+          if (error) { document.getElementById('stripe-card-errors').textContent = error.message; return; }
+          document.getElementById('payment-processing').style.display = 'none';
+          document.getElementById('payment-success').style.display = 'block';
+          if (window.fbq) fbq('track', 'Purchase', { value: getCheckoutTotal(), currency: 'USD', num_items: cart.length });
+          trackPurchase(getCheckoutTotal(), data.clientSecret);
+          startPrintProgress();
+        } catch(err) { document.getElementById('stripe-card-errors').textContent = '⚠️ Payment failed — please try again.'; }
+      });
+    }
+
+      } catch (e) { console.warn('Stripe Link unavailable:', e && e.message); }
+    });
+  } catch (e) { console.warn('Stripe Link unavailable:', e && e.message); }
+}
+
+// Square Apple Pay / Google Pay / Cash App Pay (all charge through /checkout/square-pay)
+let sqPreset = null, sqWalletPR = null, sqWalletsInit = false;
+function sqTotalStr() { return getCheckoutTotal().toFixed(2); }
+function sqReqOptions() { return { countryCode: 'US', currencyCode: 'USD', total: { amount: sqTotalStr(), label: 'Total' } }; }
+function sqRefreshWallets() { try { if (sqWalletPR && sqWalletPR.update) sqWalletPR.update(sqReqOptions()); } catch (e) {} }
+function sqWalletGate() {
+  if (typeof coValidateCheckout === 'function' && !coValidateCheckout(true)) return false;
+  if (!(document.getElementById('terms-ack') || {}).checked) { coTermsMsg(); return false; }
+  return true;
+}
+async function sqWalletPay(tokenizeFn) {
+  if (!sqWalletGate()) return;
+  try {
+    useNewCard();
+    const r = await tokenizeFn();
+    if (r.status === 'OK') { sqPreset = r.token; processPayment(); }
+    else if (r.status !== 'Cancel' && r.status !== 'Abort') {
+      const m = (r.errors && r.errors[0] && r.errors[0].message) || 'That payment method could not be used.';
+      const e = document.getElementById('stripe-card-errors'); if (e) e.textContent = '⚠️ ' + m;
+    }
+  } catch (e) { console.warn('Wallet payment error:', e && e.message); }
+}
+async function sqInitWallets() {
+  if (sqWalletsInit || !sqPayments) return;
+  const host = document.getElementById('payment-request-button');
+  const cont = document.getElementById('payment-request-container');
+  if (!host || !cont) return;
+  sqWalletsInit = true;
+  host.innerHTML = '<div id="sq-wallets" style="display:flex;flex-direction:column;gap:8px"></div><div id="sq-link-slot" style="display:none;margin-top:8px"></div>';
+  const wrap = document.getElementById('sq-wallets');
+  const pr = sqPayments.paymentRequest(sqReqOptions());
+  sqWalletPR = pr;
+  let shown = 0;
+  const reveal = () => { shown++; cont.style.display = 'block'; };
+  try {
+    const g = await sqPayments.googlePay(pr);
+    const d = document.createElement('div'); d.id = 'sq-gpay'; wrap.appendChild(d);
+    await g.attach('#sq-gpay', { buttonSizeMode: 'fill', buttonColor: 'black' });
+    d.addEventListener('click', (ev) => { ev.preventDefault(); sqWalletPay(() => g.tokenize()); });
+    reveal();
+  } catch (e) { console.info('Google Pay not available:', e && e.message); }
+  try {
+    const ap = await sqPayments.applePay(pr);
+    const b = document.createElement('button'); b.type = 'button'; b.id = 'sq-apay';
+    b.setAttribute('aria-label', 'Pay with Apple Pay');
+    b.style.cssText = 'height:48px;border:0;border-radius:8px;background:#000;color:#fff;font-size:18px;font-weight:600;cursor:pointer;-webkit-appearance:-apple-pay-button;-apple-pay-button-type:plain;-apple-pay-button-style:black;';
+    wrap.appendChild(b);
+    b.addEventListener('click', () => sqWalletPay(() => ap.tokenize()));
+    reveal();
+  } catch (e) { console.info('Apple Pay not available:', e && e.message); }
+  try {
+    const cash = await sqPayments.cashAppPay(pr, { redirectURL: window.location.href, referenceId: 'sb-' + Date.now() });
+    const d = document.createElement('div'); d.id = 'sq-cashapp'; wrap.appendChild(d);
+    await cash.attach('#sq-cashapp', { shape: 'semiround', width: 'full' });
+    cash.addEventListener('ontokenization', (ev) => {
+      const t = ev.detail && ev.detail.tokenResult;
+      if (t && t.status === 'OK') { if (!sqWalletGate()) return; useNewCard(); sqPreset = t.token; processPayment(); }
+    });
+    reveal();
+  } catch (e) { console.info('Cash App Pay not available:', e && e.message); }
+  sqInitStripeLink();
+}
 let SQ_ACTIVE = false, sqPayments = null, sqCard = null, sqSourceId = null;
 async function sqLoadConfig() {
   try { const r = await fetch(BACKEND_URL + '/checkout/config'); if (!r.ok) return null; return await r.json(); } catch (e) { return null; }
@@ -226,6 +361,7 @@ async function initSquare(cfg) {
       sqPayments = window.Square.payments(cfg.applicationId, cfg.locationId);
       sqCard = await sqPayments.card({ style: { input: { fontSize: '16px', color: '#1a1a2e' }, 'input::placeholder': { color: '#9ca3af' } } });
       await sqCard.attach('#stripe-card-element');
+      sqInitWallets();
     } catch (e) {
       sqCard = null;
       console.error('Square init error:', e);
@@ -469,7 +605,7 @@ async function processPayment() {
   // ── Call backend to create Stripe PaymentIntent (or charge via Square) ─────
   let clientSecret;
   try {
-    if (SQ_ACTIVE && !selectedSavedCardId) { sqSourceId = await sqTokenize(); }
+    if (SQ_ACTIVE && !selectedSavedCardId) { if (sqPreset) { sqSourceId = sqPreset; sqPreset = null; } else { sqSourceId = await sqTokenize(); } }
     const res = await fetch(BACKEND_URL + (SQ_ACTIVE ? '/checkout/square-pay' : '/checkout/create-payment-intent'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -4701,3 +4837,5 @@ function cartHasSatDelivery(){
   if(typeof initSatDeliveryPanels==='function'){ initSatDeliveryPanels=function(){ satHideLegacyPanels(); try{ satDeliveryExtra=0; }catch(e){} }; }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',satHideLegacyPanels); else satHideLegacyPanels();
 })();
+
+;(function(){ var _u = updateCheckoutTotal; updateCheckoutTotal = function(){ var r = _u.apply(this, arguments); try { sqRefreshWallets(); } catch(e){} return r; }; })();

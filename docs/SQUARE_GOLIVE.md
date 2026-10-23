@@ -11,6 +11,7 @@ Status: sandbox verified end to end (approved payment, declined card, terms chec
 2. Square dashboard, PRODUCTION: create/open the application, note Application ID, Production Access Token, and the Location ID of the "Speedy Banner" location (not "Klinton Barnhill").
 3. Railway variables: `SQUARE_ACCESS_TOKEN`, `SQUARE_APPLICATION_ID`, `SQUARE_LOCATION_ID`, `SQUARE_ENV=production`, `NOTIFY_EMAIL` (if not set). Leave `PAYMENT_PROVIDER` unset/`stripe`.
 4. Square webhooks: subscribe `payment.updated` and `dispute.created` to `https://<railway-domain>/webhook/square`; set `SQUARE_WEBHOOK_SIGNATURE_KEY` and `SQUARE_WEBHOOK_URL` (exact URL) on Railway.
+4b. Wallets (Square): in the Square dashboard register each pilot domain for Apple Pay and upload the verification file to `/.well-known/apple-developer-merchantid-domain-association` on that site; enable Google Pay and Cash App Pay on the production account. Stripe stays only for Link (`storefront-square-live/app.js` turns every other Stripe wallet off).
 5. Publish `storefront-square-live/app.js` as the live `app.js` on ONE pilot site (bump the `?v=` hash in index.html). Still Stripe for shoppers. Check `/checkout/config` returns provider stripe plus square block.
 6. Pilot: set `PAYMENT_PROVIDER=square`. Place one real small order on the pilot site with your own card; confirm order row, emails, Square receipt, webhook delivery; refund it in Square.
 7. Roll to other sites (each site needs the same app.js change and its origin in `sites.js`).
@@ -19,6 +20,6 @@ Status: sandbox verified end to end (approved payment, declined card, terms chec
 Set `PAYMENT_PROVIDER=stripe` on Railway. Takes effect on next page load, no redeploy of the pages.
 
 ## Known gaps
-- Apple Pay / Google Pay / Cash App Pay buttons are hidden on the Square path (Stripe Express Checkout only). Square versions are a later add-on.
+- Apple Pay / Cash App Pay / Link could not be tested in the sandbox on localhost; they get their first real test on the pilot site over HTTPS.
 - Webhook-driven order finalization is only tested with the Square payment response, not live webhook delivery.
 - Make the GitHub repo private and replace the sandbox token that appeared in chat.

@@ -4,7 +4,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test/square.test.js"
+    "test": "node --test test/square.test.js",
+    "test:square": "node local-test.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.0.0",

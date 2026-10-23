@@ -252,7 +252,7 @@ function loadStripeAndInit(callback) {
 }
 async function initStripe() {
   const _cfg = await sqLoadConfig();
-  if (_cfg && _cfg.provider === 'square' && _cfg.square) { return initSquare(_cfg.square); }
+  if (_cfg && _cfg.square)  /* TEST COPY: always use Square when the test server has Square configured */ { return initSquare(_cfg.square); }
   // If already mounted, just clear the error div and return
   if (stripeCardElement) {
     const errEl = document.getElementById('stripe-card-errors');

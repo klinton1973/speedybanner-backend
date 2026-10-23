@@ -53,7 +53,7 @@ async function sqTokenize() {
 # 1. SDK helpers + async initStripe that diverts to Square
 js=rep(js,"let stripe, stripeCardElement;\n", "let stripe, stripeCardElement;\n"+SQ_BLOCK)
 js=rep(js,"function initStripe() {\n",
- "async function initStripe() {\n  const _cfg = await sqLoadConfig();\n  if (_cfg && _cfg.provider === 'square' && _cfg.square) { return initSquare(_cfg.square); }\n")
+ "async function initStripe() {\n  const _cfg = await sqLoadConfig();\n  if (_cfg && _cfg.square)  /* TEST COPY: always use Square when the test server has Square configured */ { return initSquare(_cfg.square); }\n")
 # 2. saved cards route
 js=rep(js,"fetch(BACKEND_URL + '/checkout/saved-cards?email='","fetch(BACKEND_URL + (SQ_ACTIVE ? '/checkout/square-saved-cards' : '/checkout/saved-cards') + '?email='")
 # 3. payment request in processPayment

@@ -32,6 +32,7 @@ if (process.env.ALLOW_LOCAL_TEST !== '1') {
 
 // Local sandbox test page — only served when you run the server yourself with ALLOW_LOCAL_TEST=1.
 if (process.env.ALLOW_LOCAL_TEST === '1') {
+  app.use('/store-test', express.static(require('path').join(__dirname, 'storefront-square-test'), { index: 'index.html' }));
   app.get('/square-test', (req, res) => res.sendFile(require('path').join(__dirname, 'test', 'square-sandbox.html')));
 }
 

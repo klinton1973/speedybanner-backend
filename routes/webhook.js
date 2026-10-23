@@ -186,6 +186,16 @@ function buildShippingBanner(order, forCustomer) {
 
 // Specs arrive as one " · "-separated string; one segment per line reads far better in
 // the email and lets the shipping upgrades stand out instead of trailing a long file URL.
+// Some products are sold in a single material, so the storefront never puts it in the item
+// text and the print team could not tell what to print. Add it here so it shows on every email.
+// Backdrop Vinyl Banners are 13oz (per the product page).
+function itemLabel(i) {
+  const name = i.name || '';
+  const hasWeight = /\d+\s*oz/i.test(`${name} ${i.details || ''}`);
+  if (!hasWeight && /backdrop/i.test(name)) return `${name} (13oz vinyl)`;
+  return name;
+}
+
 function formatDetails(details) {
   if (!details) return '';
   return String(details).split(' · ').map(seg => {
@@ -210,7 +220,7 @@ function buildCustomerEmail(order) {
   const addr = order.shipping_address || {};
   const items = (order.items || [])
     .map(i => `<tr>
-      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb">${i.name}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb">${itemLabel(i)}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;color:#475569">${formatDetails(i.details)}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:center">${i.qty || 1}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700">$${Number(i.totalPrice).toFixed(2)}</td>
@@ -306,7 +316,7 @@ function buildAdminEmail(order) {
   const addr = order.shipping_address || {};
   const items = (order.items || [])
     .map(i => `<tr>
-      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-weight:600">${i.name}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-weight:600">${itemLabel(i)}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;color:#475569">${formatDetails(i.details)}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:center">${i.qty || 1}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700">$${Number(i.totalPrice).toFixed(2)}</td>

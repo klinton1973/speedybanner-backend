@@ -1008,7 +1008,7 @@ function calcMeshCustomSize(){
   calcMesh();
 }
 function calcRunner(){const b=parseFloat(document.getElementById('runner-size').value)||40;const q=parseInt(document.getElementById('runner-qty').value)||1;const u=getUrgentMult('page-banner-table');document.getElementById('runner-price').textContent='$'+(b*q*u+getSatFee('page-banner-table')).toFixed(2);}
-function calcBackdrop(){const s=parseFloat(document.getElementById('backdrop-size').value)||64;const e=parseFloat(document.getElementById('backdrop-finish').value)||0;const q=parseInt(document.getElementById('backdrop-qty').value)||1;const u=getUrgentMult('page-banner-backdrop');document.getElementById('backdrop-price').textContent='$'+((s*4+e)*q*u+getSatFee('page-banner-backdrop')).toFixed(2);}
+function calcBackdrop(){const s=parseFloat(document.getElementById('backdrop-size').value)||64;const e=parseFloat(document.getElementById('backdrop-finish').value)||0;const q=parseInt(document.getElementById('backdrop-qty').value)||1;const u=getUrgentMult('page-banner-backdrop');const mEl=document.getElementById('backdrop-material');const mm=(mEl&&mEl.value==='18oz')?1.8:1;document.getElementById('backdrop-price').textContent='$'+((s*4*mm+e)*q*u+getSatFee('page-banner-backdrop')).toFixed(2);}
 
 
 // ===== BANNER CUSTOM SIZE (CEILING ROUNDING) =====

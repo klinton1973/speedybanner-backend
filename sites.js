@@ -20,6 +20,8 @@ const SITES = {
   'www.gamefacebanners.com':  'GameFaceBanners.com',
   'rushorderbanners.com':     'RushOrderBanners.com',
   'www.rushorderbanners.com': 'RushOrderBanners.com',
+  'billboardmonkey.com':      'BillboardMonkey.com',
+  'www.billboardmonkey.com':  'BillboardMonkey.com',
 };
 
 const DEFAULT_SITE = 'SpeedyBanner.com';

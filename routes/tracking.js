@@ -62,6 +62,77 @@ function parseFedExEmail(text) {
   return { trackingNumber, recipientName, recipientZip, recipientPhone };
 }
 
+// MailerSend gives us the plain-text part when the sender included one; Signs365's
+// emails are HTML-only, so fall back to a rough text rendering of the HTML.
+function emailText(data) {
+  if (data && data.text && data.text.trim()) return data.text;
+  const html = (data && data.html) || '';
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|tr|li|h\d|table|td|th)>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&#39;|&apos;/g, "'").replace(/&quot;/g, '"')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ *\n */g, '\n');
+}
+
+// Signs365 (the print vendor that blind-ships under the site's name) sends a receipt at order
+// time — "Receipt for order #103985000785", with a "Shipping To:" block holding the customer's
+// name, street and city/state/zip — and later "Your Signs365 Order #N has Shipped! Your tracking
+// number is 8793…", which carries no recipient at all. The receipt is kept in vendor_orders so
+// the shipped email can be matched through its order number.
+const SIGNS365_ORDER = /Order\s*#:?\s*(\d{8,})/i;
+
+function parseSigns365Receipt(text) {
+  const t = text.replace(/\r\n/g, '\n');
+  if (!/Shipping To/i.test(t) || !/Receipt for order|ORDER DETAILS|Line Totals/i.test(t)) return null;
+  const m = t.match(SIGNS365_ORDER);
+  if (!m) return null;
+  const vendorOrder = m[1];
+  const lines = t.split('\n').map(l => l.trim());
+  const idx = lines.findIndex(l => /^Shipping To:?/i.test(l));
+  if (idx === -1) return null;
+  const block = [];
+  const first = lines[idx].replace(/^Shipping To:?\s*/i, '').trim();
+  if (first) block.push(first);
+  for (let i = idx + 1; i < lines.length && block.length < 6; i++) {
+    const line = lines[i];
+    if (/^(order date|est\. ship date|shipping method)/i.test(line)) break;
+    if (line === '') { if (block.length >= 3) break; else continue; }
+    block.push(line);
+  }
+  if (block.length === 0) return null;
+  const recipientName = block[0];
+  let recipientZip = null;
+  for (const line of block.slice(1)) {
+    const z = line.match(/(\d{5})(?:-\d{4})?\s*$/);
+    if (z && !/^\d+\s/.test(line)) { recipientZip = z[1]; break; }
+  }
+  const recipientStreet = block.length > 1 ? block[1] : null;
+  return { vendorOrder, recipientName, recipientStreet, recipientZip };
+}
+
+function parseSigns365Shipped(text) {
+  const t = text.replace(/\r\n/g, '\n');
+  const o = t.match(/Order\s*#:?\s*(\d{8,})\s*has\s+Shipped/i);
+  const n = t.match(/tracking\s+number\s+is\s*:?\s*([A-Z0-9]{10,22})/i);
+  if (!o || !n) return null;
+  return { vendorOrder: o[1], trackingNumber: n[1] };
+}
+
+// The vendor's street line ("22756 Tradewind Rd") against the order's street
+// ("22756 Tradewind Road, Suite 4"): same house number and same first street word.
+function streetsMatch(vendorStreet, orderStreet) {
+  const a = alnum(vendorStreet), b = alnum(orderStreet);
+  if (!a || !b) return false;
+  const num = (vendorStreet || '').match(/^\s*(\d+)/);
+  if (!num) return b.startsWith(a.slice(0, 12));
+  const word = (vendorStreet || '').replace(/^\s*\d+\s*/, '').split(/\s+/)[0] || '';
+  return (orderStreet || '').trim().startsWith(num[1]) && alnum(orderStreet).includes(alnum(word));
+}
+
 const PHONE_SHAPE = /(?<!\d)(\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?!\d)/;
 
 // Reduces any US phone spelling to its 10 digits ("(347) 422-6637",
@@ -129,7 +200,7 @@ function buildShippedEmail(order, trackingNumber, isAdditionalPackage) {
 
 // Returns the single order this FedEx shipment belongs to, or null if there's
 // no match or it's ambiguous (different customers sharing a name/zip).
-async function findSingleMatch({ recipientName, recipientZip, recipientPhone }) {
+async function findSingleMatch({ recipientName, recipientZip, recipientPhone, recipientStreet }) {
   // Include already-'shipped' orders too — multi-item orders often ship as
   // separate FedEx packages, each with its own tracking number, arriving
   // as separate emails after the order's first package already matched.
@@ -160,6 +231,14 @@ async function findSingleMatch({ recipientName, recipientZip, recipientPhone }) 
   // customer typed at checkout, when FedEx printed one on the shipment.
   if (matches.length === 0 && recipientPhone) {
     matches = (candidates || []).filter(o => phonesMatch(recipientPhone, (o.shipping_address || {}).phone));
+  }
+  // Vendor receipts carry the full street: a business name on the label ("JMC
+  // PROFESSIONAL SVCS LLC") won't match the person who ordered, but street + zip will.
+  if (matches.length === 0 && recipientStreet && recipientZip) {
+    matches = (candidates || []).filter(o => {
+      const addr = o.shipping_address || {};
+      return String(addr.zip || '').slice(0, 5) === recipientZip && streetsMatch(recipientStreet, addr.street || addr.address || addr.line1);
+    });
   }
   if (matches.length > 1 && recipientZip) {
     const zipMatches = matches.filter(o => String((o.shipping_address || {}).zip || '').slice(0, 5) === recipientZip);
@@ -222,16 +301,47 @@ router.post('/fedex', async (req, res) => {
   res.json({ received: true });
 
   try {
-    const text = req.body && req.body.data && req.body.data.text;
+    const text = emailText(req.body && req.body.data);
     if (!text) { console.error('Tracking webhook: no text body in payload'); return; }
 
-    const { trackingNumber, recipientName, recipientZip, recipientPhone } = parseFedExEmail(text);
-    if (!trackingNumber || !recipientName) {
-      console.error('Tracking webhook: could not parse tracking number/recipient from email', { trackingNumber, recipientName });
+    // Signs365 receipt: remember who the vendor order ships to, nothing else to do yet.
+    const receipt = parseSigns365Receipt(text);
+    if (receipt) {
+      const { error: vError } = await supabase.from('vendor_orders').upsert({
+        vendor_order: receipt.vendorOrder,
+        recipient_name: receipt.recipientName,
+        recipient_street: receipt.recipientStreet,
+        recipient_zip: receipt.recipientZip,
+      }, { onConflict: 'vendor_order' });
+      if (vError) throw vError;
+      console.log('Tracking webhook: stored Signs365 receipt', receipt.vendorOrder, receipt.recipientZip);
       return;
     }
 
-    const order = await findSingleMatch({ trackingNumber, recipientName, recipientZip, recipientPhone });
+    // Signs365 shipped email: look the recipient up from the receipt, then match like FedEx.
+    let parsed = null, vendorOrder = null, recipientStreet = null;
+    const shipped = parseSigns365Shipped(text);
+    if (shipped) {
+      vendorOrder = shipped.vendorOrder;
+      const { data: vo } = await supabase.from('vendor_orders').select('*').eq('vendor_order', vendorOrder).maybeSingle();
+      parsed = {
+        trackingNumber: shipped.trackingNumber,
+        recipientName: vo ? vo.recipient_name : null,
+        recipientZip: vo ? vo.recipient_zip : null,
+        recipientPhone: null,
+      };
+      recipientStreet = vo ? vo.recipient_street : null;
+      console.log('Tracking webhook: Signs365 shipped', vendorOrder, shipped.trackingNumber, vo ? 'receipt found' : 'no receipt yet');
+    } else {
+      parsed = parseFedExEmail(text);
+      if (!parsed.trackingNumber || !parsed.recipientName) {
+        console.error('Tracking webhook: could not parse tracking number/recipient from email', { trackingNumber: parsed.trackingNumber, recipientName: parsed.recipientName });
+        return;
+      }
+    }
+    const { trackingNumber, recipientName, recipientZip, recipientPhone } = parsed;
+
+    const order = await findSingleMatch({ trackingNumber, recipientName, recipientZip, recipientPhone, recipientStreet });
     if (order) {
       await applyTrackingToOrder(order, trackingNumber);
       return;
@@ -248,6 +358,8 @@ router.post('/fedex', async (req, res) => {
         recipient_name: recipientName,
         recipient_zip: recipientZip,
         recipient_phone: recipientPhone,
+        recipient_street: recipientStreet,
+        vendor_order: vendorOrder,
       }, { onConflict: 'tracking_number', ignoreDuplicates: true });
     if (queueError) throw queueError;
   } catch (err) {
@@ -322,8 +434,19 @@ async function checkUnmatchedTracking(now = new Date()) {
 
     const stillUnmatched = [];
     for (const row of pending || []) {
+      // A Signs365 shipped email that arrived before its receipt: pick the recipient up now.
+      if (row.vendor_order && !row.recipient_zip) {
+        const { data: vo } = await supabase.from('vendor_orders').select('*').eq('vendor_order', row.vendor_order).maybeSingle();
+        if (vo) {
+          row.recipient_name = vo.recipient_name; row.recipient_zip = vo.recipient_zip; row.recipient_street = vo.recipient_street;
+          await supabase.from('unmatched_tracking')
+            .update({ recipient_name: vo.recipient_name, recipient_zip: vo.recipient_zip, recipient_street: vo.recipient_street })
+            .eq('id', row.id);
+        }
+      }
       const order = await findSingleMatch({
         trackingNumber: row.tracking_number, recipientName: row.recipient_name, recipientZip: row.recipient_zip, recipientPhone: row.recipient_phone,
+        recipientStreet: row.recipient_street,
       });
       if (order) {
         await applyTrackingToOrder(order, row.tracking_number);
@@ -382,6 +505,6 @@ function startUnmatchedTrackingWorker() {
 }
 
 router.startUnmatchedTrackingWorker = startUnmatchedTrackingWorker;
-router._test = { checkUnmatchedTracking, easternParts, buildDigestEmail, parseFedExEmail, normalizePhone, phonesMatch, findSingleMatch };
+router._test = { checkUnmatchedTracking, easternParts, buildDigestEmail, parseFedExEmail, normalizePhone, phonesMatch, findSingleMatch, parseSigns365Receipt, parseSigns365Shipped, emailText, streetsMatch };
 
 module.exports = router;

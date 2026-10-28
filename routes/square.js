@@ -14,6 +14,7 @@
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { siteNameFromOrigin } = require('../sites');
+const { computeCouponDiscount } = require('../lib/coupons');
 const { PRICES, sendOrderEmails } = require('./checkout');
 const { finalizePaidOrder } = require('./webhook');
 const sq = require('../lib/square-api');
@@ -92,7 +93,16 @@ router.post('/square-pay', requireSquare, async (req, res) => {
   }
 
   const subtotalCents = Math.round(items.reduce((sum, item) => sum + item.totalPrice, 0) * 100);
-  const discount = Math.min(Math.round(discountCents), subtotalCents);
+  // The discount comes from the coupon code, never from the number the browser sent. A request that
+  // claims a discount without a valid code is refused rather than silently charged in full, so a
+  // customer with a mistyped code sees a clear message instead of a surprise on their card.
+  const claimedCents = Math.min(Math.round(Number(discountCents) || 0), subtotalCents);
+  const discount = computeCouponDiscount(req.body.couponCode, items, subtotalCents);
+  if (claimedCents > 0 && discount === 0) {
+    console.warn(`[coupon] rejected discount claim of ${claimedCents}c without a valid code (code=${JSON.stringify(req.body.couponCode || '')}) from ${customerEmail}`);
+    return res.status(400).json({ error: 'That coupon code is not valid. Please remove it or check the code and try again.' });
+  }
+  if (claimedCents !== discount) console.warn(`[coupon] client claimed ${claimedCents}c, server computed ${discount}c for ${customerEmail}`);
   const amount = subtotalCents - discount;
 
   try {

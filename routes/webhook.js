@@ -117,13 +117,36 @@ async function finalizePaidOrder(orderId, { customerEmail, extraFields = {}, onl
 // payment (Stripe's own app used to be the only text, and Square has no equivalent). Sent as an
 // email to the carrier's email-to-SMS gateway, so no SMS vendor is involved. Never throws.
 async function sendOrderText(order) {
-  const to = process.env.NOTIFY_SMS || '8592306969@tmomail.net';
-  if (!to || /^(off|none|0)$/i.test(to)) return;
   const f = shippingFlags(order);
   const flags = (f.saturday ? ' SATURDAY' : '') + (f.rush ? ' SAME-DAY' : '');
   const provider = order.payment_provider === 'square' ? 'Square' : 'Stripe';
   const amount = `$${((order.amount_cents || 0) / 100).toFixed(2)}`;
   const text = `NEW ORDER ${orderRef(order)} ${order.site || 'SpeedyBanner'} ${amount} ${provider}${flags} ${order.customer_email || ''}`.trim();
+
+  // Push notification to Klinton's phone through ntfy: the ntfy app subscribes to the topic named
+  // in NTFY_TOPIC (set on Railway, never in code — the topic name is the only secret). Unset = off.
+  const topic = process.env.NTFY_TOPIC || '';
+  if (topic && !/^(off|none|0)$/i.test(topic)) {
+    try {
+      const r = await fetch('https://ntfy.sh/' + encodeURIComponent(topic), {
+        method: 'POST',
+        headers: {
+          'Title': `New order ${orderRef(order)} - ${order.site || 'SpeedyBanner'} ${amount}`,
+          'Priority': f.saturday || f.rush ? 'urgent' : 'high',
+          'Tags': f.saturday || f.rush ? 'rotating_light,package' : 'package',
+        },
+        body: text,
+      });
+      if (!r.ok) throw new Error('ntfy HTTP ' + r.status);
+    } catch (err) {
+      console.error(`Order push notification failed for order #${order.id}:`, (err && err.message) || err);
+    }
+  }
+
+  // Carrier email-to-text gateway, off by default (T-Mobile silently dropped it on 2026-10-28).
+  // Set NOTIFY_SMS to an address such as 8592306969@tmomail.net to try it again.
+  const to = process.env.NOTIFY_SMS || '';
+  if (!to || /^(off|none|0)$/i.test(to)) return;
   try {
     const { error } = await resend.emails.send({
       from: 'SpeedyBanner Orders <orders@speedybanner.com>',

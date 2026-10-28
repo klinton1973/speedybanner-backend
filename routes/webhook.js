@@ -64,7 +64,7 @@ async function finalizePaidOrder(orderId, { customerEmail, extraFields = {}, onl
       from: `${order.site || 'SpeedyBanner'} <orders@speedybanner.com>`,
       reply_to: replyToForSite(order.site), // resend v3 expects snake_case; `replyTo` is silently ignored
       to: customerEmail || order.customer_email,
-      subject: `${subjectPrefix(order)}Order Confirmed — ${order.site || 'SpeedyBanner'} #${order.id}`,
+      subject: `${subjectPrefix(order)}Order Confirmed — ${order.site || 'SpeedyBanner'} ${orderRef(order)}`,
       html: buildCustomerEmail(order),
     });
     // The Resend SDK resolves (does not throw) on API-level failures like validation
@@ -268,7 +268,7 @@ function buildCustomerEmail(order) {
         </div>
 
         <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:14px 18px;margin-bottom:24px">
-          <strong>Order #${order.id}</strong> &nbsp;·&nbsp; Paid $${(order.amount_cents / 100).toFixed(2)} &nbsp;·&nbsp; ${flags.rush ? 'Ships today' : 'Ships next business day'}${flags.saturday ? ' &nbsp;·&nbsp; Saturday delivery' : ''}
+          <strong>Order ${orderRef(order)}</strong> &nbsp;·&nbsp; Paid $${(order.amount_cents / 100).toFixed(2)} &nbsp;·&nbsp; ${flags.rush ? 'Ships today' : 'Ships next business day'}${flags.saturday ? ' &nbsp;·&nbsp; Saturday delivery' : ''}
         </div>
         ${buildShippingBanner(order, true)}
 

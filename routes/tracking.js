@@ -175,6 +175,12 @@ function emailHandleMatches(fedexName, customerEmail) {
   return local.length > 0 && alnum(fedexName) === local;
 }
 
+// Customer-facing order number: the short sequential one (#1175), falling back to a
+// slice of the uuid for orders placed before numbering existed.
+function orderRef(order) {
+  return order.order_number ? `#${order.order_number}` : `#${String(order.id).slice(0, 8)}`;
+}
+
 function buildShippedEmail(order, trackingNumber, isAdditionalPackage) {
   return `
     <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#1a1a2e">
@@ -184,7 +190,7 @@ function buildShippedEmail(order, trackingNumber, isAdditionalPackage) {
       </div>
       <div style="background:#fff;padding:32px;border:1px solid #e5e7eb;border-top:none">
         <h2 style="color:#15803d;margin:0 0 8px">📦 ${isAdditionalPackage ? 'Another package from your order has shipped!' : 'Your order has shipped!'}</h2>
-        <p style="color:#374151;margin:0 0 24px">${isAdditionalPackage ? `A separate box from order #${order.id}` : `Order #${order.id}`} is on its way via FedEx.</p>
+        <p style="color:#374151;margin:0 0 24px">${isAdditionalPackage ? `A separate box from order ${orderRef(order)}` : `Order ${orderRef(order)}`} is on its way via FedEx.</p>
         <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:14px 18px;margin-bottom:24px">
           <strong>Tracking Number:</strong> ${trackingNumber}<br>
           <a href="https://www.fedex.com/fedextrack/?trknbr=${trackingNumber}" style="color:#1a3fa8">Track your package →</a>
@@ -273,7 +279,7 @@ async function applyTrackingToOrder(order, trackingNumber) {
     from: `${order.site || 'SpeedyBanner'} <orders@speedybanner.com>`,
     reply_to: replyToForSite(order.site), // resend v3 expects snake_case; `replyTo` is silently ignored
     to: order.customer_email,
-    subject: `${isAdditionalPackage ? 'Another Package From Your Order Has Shipped' : 'Your Order Has Shipped'} — ${order.site || 'SpeedyBanner'} #${order.id}`,
+    subject: `${isAdditionalPackage ? 'Another Package From Your Order Has Shipped' : 'Your Order Has Shipped'} — ${order.site || 'SpeedyBanner'} ${orderRef(order)}`,
     html: buildShippedEmail(order, trackingNumber, isAdditionalPackage),
   });
 

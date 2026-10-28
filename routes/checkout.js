@@ -216,7 +216,7 @@ async function sendOrderEmails(order) {
       from: `${order.site || 'SpeedyBanner'} <orders@speedybanner.com>`,
       reply_to: replyToForSite(order.site), // resend v3 expects snake_case; `replyTo` is silently ignored
       to: order.customer_email,
-      subject: `${subjectPrefix(order)}Order Confirmed — ${order.site || 'SpeedyBanner'} #${order.id}`,
+      subject: `${subjectPrefix(order)}Order Confirmed — ${order.site || 'SpeedyBanner'} ${orderRef(order)}`,
       html: buildCustomerEmail(order),
     });
     // The Resend SDK resolves (does not throw) on API-level failures like validation

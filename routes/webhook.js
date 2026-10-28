@@ -108,7 +108,33 @@ async function finalizePaidOrder(orderId, { customerEmail, extraFields = {}, onl
       }
     }
   }
+
+  await sendOrderText(order);
   return order;
+}
+
+// Short text message to Klinton's phone for every paid order, whichever processor took the
+// payment (Stripe's own app used to be the only text, and Square has no equivalent). Sent as an
+// email to the carrier's email-to-SMS gateway, so no SMS vendor is involved. Never throws.
+async function sendOrderText(order) {
+  const to = process.env.NOTIFY_SMS || '8592306969@tmomail.net';
+  if (!to || /^(off|none|0)$/i.test(to)) return;
+  const f = shippingFlags(order);
+  const flags = (f.saturday ? ' SATURDAY' : '') + (f.rush ? ' SAME-DAY' : '');
+  const provider = order.payment_provider === 'square' ? 'Square' : 'Stripe';
+  const amount = `$${((order.amount_cents || 0) / 100).toFixed(2)}`;
+  const text = `NEW ORDER ${orderRef(order)} ${order.site || 'SpeedyBanner'} ${amount} ${provider}${flags} ${order.customer_email || ''}`.trim();
+  try {
+    const { error } = await resend.emails.send({
+      from: 'SpeedyBanner Orders <orders@speedybanner.com>',
+      to,
+      subject: 'New order',
+      text,
+    });
+    if (error) throw error;
+  } catch (err) {
+    console.error(`Order text message failed for order #${order.id}:`, err);
+  }
 }
 
 // Collects every distinct fileKey across the order's line items (plus the legacy
@@ -395,3 +421,4 @@ module.exports.buildAdminEmail = buildAdminEmail;
 module.exports.buildAttachmentsForOrder = buildAttachmentsForOrder;
 module.exports.orderRef = orderRef;
 module.exports.subjectPrefix = subjectPrefix;
+module.exports.sendOrderText = sendOrderText;

@@ -209,7 +209,7 @@ router.post('/create-payment-intent', async (req, res) => {
 
 // Shared email sending used by free orders (paid orders use the webhook)
 async function sendOrderEmails(order) {
-  const { buildCustomerEmail, buildAdminEmail, buildAttachmentsForOrder, orderRef, subjectPrefix } = require('./webhook');
+  const { buildCustomerEmail, buildAdminEmail, buildAttachmentsForOrder, orderRef, subjectPrefix, sendOrderText } = require('./webhook');
 
   try {
     const { error } = await resend.emails.send({
@@ -242,6 +242,7 @@ async function sendOrderEmails(order) {
       console.error(`Free order admin notification failed for order #${order.id}:`, err);
     }
   }
+  await sendOrderText(order);
 }
 
 module.exports = router;

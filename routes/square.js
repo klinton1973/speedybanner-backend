@@ -146,8 +146,19 @@ router.post('/square-pay', requireSquare, async (req, res) => {
     if (customerId) payBody.customer_id = customerId;
     if (verificationToken) payBody.verification_token = verificationToken;
 
-    const pay = await sq.squareRequest('POST', '/v2/payments', payBody);
-    const payment = pay.data.payment;
+    let pay = await sq.squareRequest('POST', '/v2/payments', payBody);
+    let payment = pay.data.payment;
+
+    // Buyer verification (3-D Secure) is best effort: if Square rejects the request itself
+    // because of the verification token (expired, amount mismatch, malformed) rather than the
+    // card being declined, charge once more without it so a verification hiccup never costs a sale.
+    if ((!pay.ok || !payment) && verificationToken && (pay.errors || []).some(e => e.category === 'INVALID_REQUEST_ERROR')) {
+      console.warn(`[square] retrying order ${order.id} without verification token:`, JSON.stringify(pay.errors));
+      const retryBody = { ...payBody, idempotency_key: `order-${order.id}-noverify` };
+      delete retryBody.verification_token;
+      pay = await sq.squareRequest('POST', '/v2/payments', retryBody);
+      payment = pay.data.payment;
+    }
 
     if (!pay.ok || !payment || payment.status !== 'COMPLETED') {
       console.warn(`[square] payment not completed for order ${order.id}:`, JSON.stringify(pay.errors), payment && payment.status);

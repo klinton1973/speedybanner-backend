@@ -192,7 +192,7 @@ async function applyTrackingToOrder(order, trackingNumber) {
 
   await resend.emails.send({
     from: `${order.site || 'SpeedyBanner'} <orders@speedybanner.com>`,
-    replyTo: replyToForSite(order.site),
+    reply_to: replyToForSite(order.site), // resend v3 expects snake_case; `replyTo` is silently ignored
     to: order.customer_email,
     subject: `${isAdditionalPackage ? 'Another Package From Your Order Has Shipped' : 'Your Order Has Shipped'} — ${order.site || 'SpeedyBanner'} #${order.id}`,
     html: buildShippedEmail(order, trackingNumber, isAdditionalPackage),

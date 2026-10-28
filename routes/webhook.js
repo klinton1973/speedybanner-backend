@@ -62,7 +62,7 @@ async function finalizePaidOrder(orderId, { customerEmail, extraFields = {}, onl
   try {
     const { error } = await resend.emails.send({
       from: `${order.site || 'SpeedyBanner'} <orders@speedybanner.com>`,
-      replyTo: replyToForSite(order.site),
+      reply_to: replyToForSite(order.site), // resend v3 expects snake_case; `replyTo` is silently ignored
       to: customerEmail || order.customer_email,
       subject: `${subjectPrefix(order)}Order Confirmed — ${order.site || 'SpeedyBanner'} #${order.id}`,
       html: buildCustomerEmail(order),

@@ -179,7 +179,7 @@ async function runAbandonedPass() {
       try {
         const { error } = await resend.emails.send({
           from: `${order.site || 'SpeedyBanner'} <orders@speedybanner.com>`,
-          replyTo: replyToForSite(order.site),
+          reply_to: replyToForSite(order.site), // resend v3 expects snake_case; `replyTo` is silently ignored
           to: email,
           subject: subjectFor(order),
           html: buildAbandonedEmail(order),

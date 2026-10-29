@@ -113,9 +113,9 @@ async function finalizePaidOrder(orderId, { customerEmail, extraFields = {}, onl
   return order;
 }
 
-// Short text message to Klinton's phone for every paid order, whichever processor took the
-// payment (Stripe's own app used to be the only text, and Square has no equivalent). Sent as an
-// email to the carrier's email-to-SMS gateway, so no SMS vendor is involved. Never throws.
+// Phone alert to Klinton for every paid order, whichever processor took the payment (Stripe's
+// own app used to be the only text, and Square has no equivalent): ntfy push + Pushover push,
+// each optional and independent, plus a carrier email-to-SMS gateway that is off by default. Never throws.
 async function sendOrderText(order) {
   const f = shippingFlags(order);
   const flags = (f.saturday ? ' SATURDAY' : '') + (f.rush ? ' SAME-DAY' : '');
@@ -140,6 +140,30 @@ async function sendOrderText(order) {
       if (!r.ok) throw new Error('ntfy HTTP ' + r.status);
     } catch (err) {
       console.error(`Order push notification failed for order #${order.id}:`, (err && err.message) || err);
+    }
+  }
+
+  // Second, independent channel: Pushover (ntfy's free relay silently dropped order #1185 on
+  // 2026-10-28). Needs PUSHOVER_USER (user key) and PUSHOVER_TOKEN (app token), both set on
+  // Railway only. Saturday / same-day orders go out as "emergency" priority, which re-alerts the
+  // phone every 60s for up to 1h until Klinton acknowledges it; everything else is "high".
+  const poUser = process.env.PUSHOVER_USER || '', poToken = process.env.PUSHOVER_TOKEN || '';
+  if (poUser && poToken && !/^(off|none|0)$/i.test(poUser)) {
+    try {
+      const urgent = !!(f.saturday || f.rush);
+      const form = new URLSearchParams({
+        token: poToken, user: poUser,
+        title: `New order ${orderRef(order)} - ${order.site || 'SpeedyBanner'} ${amount}`,
+        message: text,
+        priority: urgent ? '2' : '1',
+        sound: 'cashregister',
+      });
+      if (urgent) { form.set('retry', '60'); form.set('expire', '3600'); }
+      const r = await fetch('https://api.pushover.net/1/messages.json', { method: 'POST', body: form });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok || body.status !== 1) throw new Error('Pushover HTTP ' + r.status + ' ' + JSON.stringify(body.errors || body));
+    } catch (err) {
+      console.error(`Order Pushover notification failed for order #${order.id}:`, (err && err.message) || err);
     }
   }
 

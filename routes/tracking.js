@@ -356,7 +356,12 @@ router.post('/fedex', async (req, res) => {
     } else {
       parsed = parseFedExEmail(text);
       if (!parsed.trackingNumber || !parsed.recipientName) {
-        console.error('Tracking webhook: could not parse tracking number/recipient from email', { trackingNumber: parsed.trackingNumber, recipientName: parsed.recipientName });
+        // Unknown layout (a vendor we do not parse yet, e.g. B2Sign): keep a compact excerpt in
+        // the logs so a parser can be written from a real sample instead of guessing.
+        const d = (req.body && req.body.data) || {};
+        const from = (d.from && (d.from.email || d.from.address)) || (typeof d.from === 'string' ? d.from : '') || '';
+        console.error('Tracking webhook: could not parse tracking number/recipient from email', { trackingNumber: parsed.trackingNumber, recipientName: parsed.recipientName, from, subject: d.subject || '' });
+        console.error('Tracking webhook: unparsed email excerpt >>>' + text.replace(/\s+/g, ' ').slice(0, 3000) + '<<<');
         return;
       }
     }

@@ -181,7 +181,20 @@ function orderRef(order) {
   return order.order_number ? `#${order.order_number}` : `#${String(order.id).slice(0, 8)}`;
 }
 
+// Which carrier a tracking number belongs to, from its shape. Signs365 ships FedEx, but larger
+// jobs sometimes go out on another carrier (order #1186, 2026-10-29), and the customer's link
+// has to open the right tracker. Unknown shapes fall back to a web search for the number.
+function carrierFor(trackingNumber) {
+  const n = String(trackingNumber || '').replace(/\s+/g, '').toUpperCase();
+  if (/^1Z[0-9A-Z]{16}$/.test(n)) return { name: 'UPS', url: `https://www.ups.com/track?tracknum=${n}` };
+  if (/^(9[2-5]\d{20,24}|[A-Z]{2}\d{9}US)$/.test(n)) return { name: 'USPS', url: `https://tools.usps.com/go/TrackConfirmAction?tLabels=${n}` };
+  if (/^(\d{12}|\d{15}|\d{20}|\d{22})$/.test(n)) return { name: 'FedEx', url: `https://www.fedex.com/fedextrack/?trknbr=${n}` };
+  if (/^\d{10}$/.test(n)) return { name: 'DHL', url: `https://www.dhl.com/us-en/home/tracking.html?tracking-id=${n}` };
+  return { name: 'the carrier', url: `https://www.google.com/search?q=${encodeURIComponent('track package ' + n)}` };
+}
+
 function buildShippedEmail(order, trackingNumber, isAdditionalPackage) {
+  const carrier = carrierFor(trackingNumber);
   return `
     <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#1a1a2e">
       <div style="background:#1a3fa8;padding:28px 32px;border-radius:8px 8px 0 0;text-align:center">
@@ -190,10 +203,10 @@ function buildShippedEmail(order, trackingNumber, isAdditionalPackage) {
       </div>
       <div style="background:#fff;padding:32px;border:1px solid #e5e7eb;border-top:none">
         <h2 style="color:#15803d;margin:0 0 8px">📦 ${isAdditionalPackage ? 'Another package from your order has shipped!' : 'Your order has shipped!'}</h2>
-        <p style="color:#374151;margin:0 0 24px">${isAdditionalPackage ? `A separate box from order ${orderRef(order)}` : `Order ${orderRef(order)}`} is on its way via FedEx.</p>
+        <p style="color:#374151;margin:0 0 24px">${isAdditionalPackage ? `A separate box from order ${orderRef(order)}` : `Order ${orderRef(order)}`} is on its way via ${carrier.name}.</p>
         <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:14px 18px;margin-bottom:24px">
           <strong>Tracking Number:</strong> ${trackingNumber}<br>
-          <a href="https://www.fedex.com/fedextrack/?trknbr=${trackingNumber}" style="color:#1a3fa8">Track your package →</a>
+          <a href="${carrier.url}" style="color:#1a3fa8">Track your package →</a>
         </div>
         <p style="color:#6b7280;font-size:13px;margin:0">Questions? Call <a href="tel:+13474226637" style="color:#1a3fa8">(347) 422-6637</a> or reply to this email.</p>
       </div>
@@ -397,7 +410,7 @@ function buildDigestEmail(rows) {
   const trs = rows.map(r => `
           <tr>
             <td style="padding:8px;border:1px solid #e5e7eb;font-family:monospace">
-              <a href="https://www.fedex.com/fedextrack/?trknbr=${r.tracking_number}" style="color:#1a3fa8">${r.tracking_number}</a>
+              <a href="${carrierFor(r.tracking_number).url}" style="color:#1a3fa8">${r.tracking_number}</a>
             </td>
             <td style="padding:8px;border:1px solid #e5e7eb">${r.recipient_name || ''}</td>
             <td style="padding:8px;border:1px solid #e5e7eb">${r.recipient_zip || ''}</td>

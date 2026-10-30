@@ -114,6 +114,38 @@ function parseSigns365Receipt(text) {
   return { vendorOrder, recipientName, recipientStreet, recipientZip };
 }
 
+// B2Sign (second print vendor, orders placed from klinton@bigdaddystickers.com) puts the tracking
+// number AND the ship-to block in its one "Your Order A9253351 has been shipped" email:
+//   Tracking#: 879447975431
+//   Your order will be sent to:
+//   Ziebart Constriction        <- company line (optional)
+//   Matt Ziebart                <- name
+//   16324 Pleasant Valley Dr NE <- street
+//   Silverton, OR 97381
+//   Shipped ...
+// So no receipt lookup is needed; the match runs on name, then street + zip (2026-10-29).
+function parseB2SignShipped(text) {
+  const t = text.replace(/\r\n/g, '\n');
+  if (!/b2sign/i.test(t) || !/has been shipped/i.test(t)) return null;
+  const n = t.match(/Tracking\s*#\s*:?\s*([A-Z0-9]{10,22})/i);
+  if (!n) return null;
+  const o = t.match(/Order\s+([A-Z0-9-]{6,20})\s+has been shipped/i);
+  const block = t.match(/will be sent to\s*:?\s*\n([\s\S]{0,400}?)\n\s*(?:Shipped|Arriving|Job ID|View Job)/i);
+  const lines = block ? block[1].split('\n').map(l => l.trim()).filter(Boolean).slice(0, 6) : [];
+  let recipientName = null, recipientStreet = null, recipientZip = null;
+  const cityIdx = lines.findIndex(l => /,\s*[A-Z]{2}\s+\d{5}(-\d{4})?\s*$/.test(l));
+  if (cityIdx > 0) {
+    recipientZip = lines[cityIdx].match(/(\d{5})(?:-\d{4})?\s*$/)[1];
+    recipientStreet = lines[cityIdx - 1];
+    // Name is the line just above the street; a company line above that is kept as a fallback.
+    const above = lines.slice(0, cityIdx - 1);
+    recipientName = above.length ? above[above.length - 1] : null;
+    if (!recipientName && recipientStreet) recipientName = recipientStreet;
+  }
+  return { vendorOrder: o ? o[1] : null, trackingNumber: n[1], recipientName, recipientStreet, recipientZip,
+           company: cityIdx > 2 ? lines[0] : null };
+}
+
 function parseSigns365Shipped(text) {
   const t = text.replace(/\r\n/g, '\n');
   const o = t.match(/Order\s*#:?\s*(\d{8,})\s*has\s+Shipped/i);
@@ -341,8 +373,14 @@ router.post('/fedex', async (req, res) => {
 
     // Signs365 shipped email: look the recipient up from the receipt, then match like FedEx.
     let parsed = null, vendorOrder = null, recipientStreet = null;
-    const shipped = parseSigns365Shipped(text);
-    if (shipped) {
+    const b2 = parseB2SignShipped(text);
+    const shipped = b2 ? null : parseSigns365Shipped(text);
+    if (b2) {
+      vendorOrder = b2.vendorOrder;
+      parsed = { trackingNumber: b2.trackingNumber, recipientName: b2.recipientName, recipientZip: b2.recipientZip, recipientPhone: null };
+      recipientStreet = b2.recipientStreet;
+      console.log('Tracking webhook: B2Sign shipped', vendorOrder, b2.trackingNumber, b2.recipientZip || 'no address block');
+    } else if (shipped) {
       vendorOrder = shipped.vendorOrder;
       const { data: vo } = await supabase.from('vendor_orders').select('*').eq('vendor_order', vendorOrder).maybeSingle();
       parsed = {

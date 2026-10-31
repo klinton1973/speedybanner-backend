@@ -184,6 +184,20 @@ async function sendOrderText(order) {
   }
 }
 
+// Print files reach the inbox as "<buyer name> <type-and-size>.pdf", e.g.
+// "Lamont Wayne Business-Card-3.5x2in.pdf", so a file can be matched to its order at a glance
+// (Klinton's ask, 2026-10-31). The browser already names the file by product type and size; this
+// only prepends the name from the checkout form, falling back to the email handle.
+function buyerFileName(order, originalName) {
+  const addr = order.shipping_address || {};
+  let who = String(addr.name || '').trim();
+  if (!who) who = String(order.customer_email || '').split('@')[0];
+  who = who.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+  const base = String(originalName || 'file');
+  if (!who || base.toLowerCase().startsWith(who.toLowerCase() + ' ')) return base;
+  return `${who} ${base}`;
+}
+
 // Collects every distinct fileKey across the order's line items (plus the legacy
 // top-level file_key, for orders placed before per-item fileKey was sent) and
 // fetches each from R2 as a separate email attachment.
@@ -209,7 +223,7 @@ async function buildAttachmentsForOrder(order) {
         console.log(`File ${key} would push total attachments past ${MAX_TOTAL} bytes — skipping, link included in email`);
         continue;
       }
-      attachments.push({ filename: file.originalName, content: file.buffer });
+      attachments.push({ filename: buyerFileName(order, file.originalName), content: file.buffer });
       totalBytes += file.buffer.length;
     } catch (fileErr) {
       console.error(`Could not fetch file ${key} for attachment:`, fileErr.message);

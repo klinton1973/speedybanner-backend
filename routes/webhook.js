@@ -80,7 +80,8 @@ async function finalizePaidOrder(orderId, { customerEmail, extraFields = {}, onl
   const notifyTo = process.env.NOTIFY_EMAIL;
   if (notifyTo) {
     const attachments = await buildAttachmentsForOrder(order);
-    const adminSubject = `${subjectPrefix(order)}🖨️ NEW ORDER ${orderRef(order)} — [${order.site || 'SpeedyBanner'}] — $${(order.amount_cents / 100).toFixed(2)} — ${order.customer_email}`;
+    const deliverBy = vendorDeliverBy(order);
+    const adminSubject = `${subjectPrefix(order)}${deliverBy.length ? `📅 DELIVER BY ${fmtDay(deliverBy[0].deliver)} — ` : ''}🖨️ NEW ORDER ${orderRef(order)} — [${order.site || 'SpeedyBanner'}] — $${(order.amount_cents / 100).toFixed(2)} — ${order.customer_email}`;
 
     try {
       const { error } = await resend.emails.send({
@@ -278,9 +279,68 @@ function buildShippingBanner(order, forCustomer) {
 // Backdrop Vinyl Banners are 13oz (per the product page).
 function itemLabel(i) {
   const name = i.name || '';
-  const hasWeight = /\d+\s*oz/i.test(`${name} ${i.details || ''}`);
+  const hasWeight = /\d+\s*oz|mesh/i.test(`${name} ${i.details || ''}`);
   if (!hasWeight && /backdrop/i.test(name)) return `${name} (13oz vinyl)`;
+  // The custom-size banner has a 13oz/18oz material picker, but the designer and upload
+  // buttons did not copy the choice into the order text until 2026-10-31 (order #1196).
+  if (!hasWeight && /custom vinyl banner/i.test(name)) return `${name} <span style="color:#b91c1c;font-weight:800">(⚠ material not recorded — 13oz unless the customer says otherwise)</span>`;
   return name;
+}
+
+// ===== DELIVER-BY DATES FOR VENDOR-MADE ITEMS (2026-10-31) =====
+// Tents, feather flags, table throws and the tension-fabric step & repeat kit are made by
+// B2Sign, so they ship out two business days after the order instead of the next day. The
+// storefront shows the customer the same dates; this puts them on Klinton's copy of the order
+// (not the customer's confirmation) so the vendor order can be placed against a real deadline.
+// Rules shared with the storefront timer: orders count from the day they are placed (ET) if
+// before 9 PM, otherwise the next day; Friday/Saturday orders count as Sunday; ship-out and
+// delivery dates skip weekends; delivery is the business day after ship-out (FedEx Overnight).
+const VENDOR_LEAD_DAYS = [
+  [/event tent/i, 2],
+  [/feather flag/i, 2],
+  [/table throw/i, 2],
+  [/tension fabric/i, 2],
+];
+function leadDaysFor(item) {
+  const name = String((item && item.name) || '');
+  for (const [re, days] of VENDOR_LEAD_DAYS) if (re.test(name)) return days;
+  return 1;
+}
+function etDate(iso) {
+  const d = iso ? new Date(iso) : new Date();
+  return new Date(d.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+}
+function addBusinessDays(d, n) {
+  const x = new Date(d);
+  while (n > 0) { x.setDate(x.getDate() + 1); if (x.getDay() !== 0 && x.getDay() !== 6) n--; }
+  return x;
+}
+function deliverySchedule(orderedAt, shipDays) {
+  const now = etDate(orderedAt);
+  let eff = new Date(now); eff.setHours(0, 0, 0, 0);
+  if (now.getHours() >= 21) eff.setDate(eff.getDate() + 1);
+  if (eff.getDay() === 5) eff.setDate(eff.getDate() + 2);
+  else if (eff.getDay() === 6) eff.setDate(eff.getDate() + 1);
+  const ship = addBusinessDays(eff, shipDays || 1);
+  const deliver = addBusinessDays(ship, 1);
+  return { ship, deliver };
+}
+function fmtDay(d) {
+  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+}
+// One row per vendor-made line item; empty for orders that only contain in-house products.
+function vendorDeliverBy(order) {
+  const orderedAt = order.paid_at || order.created_at;
+  return (order.items || [])
+    .map(i => ({ item: i, days: leadDaysFor(i) }))
+    .filter(x => x.days > 1)
+    .map(x => ({ name: x.item.name, days: x.days, ...deliverySchedule(orderedAt, x.days) }));
+}
+function buildDeliverByBanner(order) {
+  const rows = vendorDeliverBy(order);
+  if (!rows.length) return '';
+  const lines = rows.map(r => `<div style="margin-top:6px"><span style="font-size:16px;font-weight:800;color:#1e3a8a">📅 DELIVER BY ${fmtDay(r.deliver).toUpperCase()}</span> — ${escapeHtml(r.name)}<div style="color:#1e40af;font-size:13px">Vendor item (B2Sign): must ship out by ${fmtDay(r.ship)} for FedEx Overnight delivery ${fmtDay(r.deliver)}. Customer was shown these dates.</div></div>`);
+  return `<div style="background:#dbeafe;border:3px solid #3b82f6;border-radius:8px;padding:12px 18px;margin-bottom:20px">${lines.join('')}</div>`;
 }
 
 function formatDetails(details) {
@@ -420,6 +480,7 @@ function buildAdminEmail(order) {
       </div>
       <div style="background:#fff;padding:28px;border:1px solid #e5e7eb;border-top:none">
         ${buildShippingBanner(order, false)}
+        ${buildDeliverByBanner(order)}
 
         <div style="margin-bottom:16px;padding:10px 14px;border-radius:6px;font-size:13px;${order.terms_accepted_at ? 'background:#f0fdf4;color:#15803d' : 'background:#fef2f2;color:#b91c1c'}">
           ${order.terms_accepted_at
@@ -480,6 +541,8 @@ module.exports.finalizePaidOrder = finalizePaidOrder;
 module.exports.buildCustomerEmail = buildCustomerEmail;
 module.exports.buildAdminEmail = buildAdminEmail;
 module.exports.buildAttachmentsForOrder = buildAttachmentsForOrder;
+module.exports.vendorDeliverBy = vendorDeliverBy;
+module.exports.deliverySchedule = deliverySchedule;
 module.exports.orderRef = orderRef;
 module.exports.subjectPrefix = subjectPrefix;
 module.exports.sendOrderText = sendOrderText;

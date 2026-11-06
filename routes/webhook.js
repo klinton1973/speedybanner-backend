@@ -209,8 +209,12 @@ async function buildAttachmentsForOrder(order) {
   }
   if (order.file_key && !keys.includes(order.file_key)) keys.push(order.file_key);
 
-  const MAX_ATTACH = 25 * 1024 * 1024; // 25 MB per file
-  const MAX_TOTAL = 35 * 1024 * 1024; // Resend caps the whole email (content + attachments) at 40MB — leave headroom for the HTML body
+  // Attachments travel base64-encoded (about 1.37x their raw size), and the receiving mailbox
+  // enforces its own message limit (commonly 25MB) after Resend has already accepted the send.
+  // Order #1220's 21MB PDF passed the old 25MB/35MB raw caps, became a ~29MB message and never
+  // arrived. Keep the encoded total under ~18MB; bigger files stay as links in the email body.
+  const MAX_ATTACH = 12 * 1024 * 1024; // raw bytes per file
+  const MAX_TOTAL = 13 * 1024 * 1024; // raw bytes across all attachments
   const attachments = [];
   let totalBytes = 0;
   for (const key of keys) {

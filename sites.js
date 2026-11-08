@@ -22,6 +22,8 @@ const SITES = {
   'www.rushorderbanners.com': 'RushOrderBanners.com',
   'billboardmonkey.com':      'BillboardMonkey.com',
   'www.billboardmonkey.com':  'BillboardMonkey.com',
+  'overnightbanner.com':      'OvernightBanner.com',
+  'www.overnightbanner.com':  'OvernightBanner.com',
 };
 
 const DEFAULT_SITE = 'SpeedyBanner.com';

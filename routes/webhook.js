@@ -88,7 +88,7 @@ async function finalizePaidOrder(orderId, { customerEmail, extraFields = {}, onl
         from: 'SpeedyBanner Orders <orders@speedybanner.com>',
         to: notifyTo,
         subject: adminSubject,
-        html: buildAdminEmail(order),
+        html: buildAdminEmail(order, attachments.skipped),
         attachments,
       });
       if (error) throw error;
@@ -100,7 +100,7 @@ async function finalizePaidOrder(orderId, { customerEmail, extraFields = {}, onl
             from: 'SpeedyBanner Orders <orders@speedybanner.com>',
             to: notifyTo,
             subject: `${adminSubject} [attachments failed — see file links in email]`,
-            html: buildAdminEmail(order),
+            html: buildAdminEmail(order, allFilesSkipped(order, attachments.skipped)),
           });
           if (fallbackError) throw fallbackError;
         } catch (fallbackErr) {
@@ -216,25 +216,70 @@ async function buildAttachmentsForOrder(order) {
   const MAX_ATTACH = 12 * 1024 * 1024; // raw bytes per file
   const MAX_TOTAL = 13 * 1024 * 1024; // raw bytes across all attachments
   const attachments = [];
+  // Files left out of the email, keyed by fileKey: { bytes, reason }. buildAdminEmail prints
+  // "file too large to attach, download here" beside each one so a missing attachment is never
+  // mistaken for a missing print file (orders #1232 and #1233, 2026-11-11).
+  const skipped = {};
+  attachments.skipped = skipped;
   let totalBytes = 0;
   for (const key of keys) {
     try {
       const file = await fetchFileFromR2(key);
       if (file.buffer.length > MAX_ATTACH) {
         console.log(`File ${key} is ${file.buffer.length} bytes — too large to attach, link included in email`);
+        skipped[key] = { bytes: file.buffer.length, reason: 'large' };
         continue;
       }
       if (totalBytes + file.buffer.length > MAX_TOTAL) {
         console.log(`File ${key} would push total attachments past ${MAX_TOTAL} bytes — skipping, link included in email`);
+        skipped[key] = { bytes: file.buffer.length, reason: 'large' };
         continue;
       }
       attachments.push({ filename: buyerFileName(order, file.originalName), content: file.buffer });
       totalBytes += file.buffer.length;
     } catch (fileErr) {
       console.error(`Could not fetch file ${key} for attachment:`, fileErr.message);
+      skipped[key] = { bytes: 0, reason: 'error' };
     }
   }
   return attachments;
+}
+
+// Used when the send with attachments failed and the email is re-sent without them:
+// every file on the order is then download-only.
+function allFilesSkipped(order, skipped) {
+  const out = { ...(skipped || {}) };
+  const keys = (order.items || []).map(i => i.fileKey).concat(order.file_key).filter(Boolean);
+  for (const k of keys) if (!out[k]) out[k] = { bytes: 0, reason: 'error' };
+  return out;
+}
+
+function fileSizeLabel(bytes) {
+  return bytes > 0 ? ` (${(bytes / (1024 * 1024)).toFixed(1)} MB)` : '';
+}
+
+// Red label shown in front of a file link that is not attached to the email.
+function notAttachedLabel(info) {
+  if (!info) return '';
+  const why = info.reason === 'large' ? `FILE TOO LARGE TO ATTACH${fileSizeLabel(info.bytes)}` : 'FILE NOT ATTACHED';
+  return `<span style="color:#b91c1c;font-weight:800">⚠ ${why} — DOWNLOAD HERE:</span> `;
+}
+
+// Banner at the top of the sale email when any print file is download-only.
+function buildNotAttachedBanner(order, skipped) {
+  const keys = Object.keys(skipped || {});
+  if (!keys.length) return '';
+  const base = process.env.R2_PUBLIC_URL;
+  const rows = keys.map(k => {
+    const idx = (order.items || []).findIndex(i => i.fileKey === k);
+    const name = idx >= 0 ? `${idx + 1}. ${escapeHtml(order.items[idx].name || 'Item')}` : 'Design file';
+    const big = skipped[k].reason === 'large';
+    return `<div style="margin-top:6px"><strong>${name}</strong>${big ? fileSizeLabel(skipped[k].bytes) : ''}: <a href="${base}/${k}" style="color:#1a3fa8;font-weight:700">${big ? 'File too large to attach — download here' : 'File not attached — download here'}</a></div>`;
+  }).join('');
+  return `<div style="background:#fef2f2;border:3px solid #dc2626;border-radius:8px;padding:12px 18px;margin-bottom:20px">
+        <div style="font-size:16px;font-weight:800;color:#991b1b">⚠ ${keys.length} PRINT FILE${keys.length > 1 ? 'S' : ''} NOT ATTACHED TO THIS EMAIL</div>
+        <div style="color:#7f1d1d;font-size:13px">Nothing is missing. Download ${keys.length > 1 ? 'them' : 'it'} from the link${keys.length > 1 ? 's' : ''} below.</div>${rows}
+      </div>`;
 }
 
 // The sequential order number shown on the internal sale notification. The
@@ -439,13 +484,14 @@ function buildCustomerEmail(order) {
 
 // Shows a design-file link per line item when items carry their own fileKey,
 // falling back to the legacy single order.file_key for older orders.
-function buildFileSection(order) {
+function buildFileSection(order, skipped) {
+  skipped = skipped || {};
   const items = order.items || [];
   const perItem = items.filter(i => i.fileKey);
 
   if (perItem.length > 0) {
     const rows = items.map((i, idx) => i.fileKey
-      ? `<div style="margin-bottom:6px"><strong>${idx + 1}. ${i.name}:</strong> <a href="${process.env.R2_PUBLIC_URL}/${i.fileKey}" style="color:#1a3fa8;word-break:break-all">${process.env.R2_PUBLIC_URL}/${i.fileKey}</a></div>`
+      ? `<div style="margin-bottom:6px"><strong>${idx + 1}. ${i.name}:</strong> ${notAttachedLabel(skipped[i.fileKey])}<a href="${process.env.R2_PUBLIC_URL}/${i.fileKey}" style="color:#1a3fa8;word-break:break-all">${process.env.R2_PUBLIC_URL}/${i.fileKey}</a></div>`
       : `<div style="margin-bottom:6px;color:#dc2626"><strong>${idx + 1}. ${i.name}:</strong> ⚠️ No design file uploaded</div>`
     ).join('');
     return `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:14px 18px;margin-bottom:20px">
@@ -456,14 +502,14 @@ function buildFileSection(order) {
   return order.file_key
     ? `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:14px 18px;margin-bottom:20px">
         <strong>📎 Design File:</strong><br>
-        <a href="${process.env.R2_PUBLIC_URL}/${order.file_key}" style="color:#1a3fa8;word-break:break-all">${process.env.R2_PUBLIC_URL}/${order.file_key}</a>
+        ${notAttachedLabel(skipped[order.file_key])}<a href="${process.env.R2_PUBLIC_URL}/${order.file_key}" style="color:#1a3fa8;word-break:break-all">${process.env.R2_PUBLIC_URL}/${order.file_key}</a>
       </div>`
     : `<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:14px 18px;margin-bottom:20px">
         ⚠️ <strong>No design file uploaded.</strong> Contact customer before printing.
       </div>`;
 }
 
-function buildAdminEmail(order) {
+function buildAdminEmail(order, skipped) {
   const addr = order.shipping_address || {};
   const items = (order.items || [])
     .map(i => `<tr>
@@ -474,7 +520,7 @@ function buildAdminEmail(order) {
     </tr>`)
     .join('');
 
-  const fileSection = buildFileSection(order);
+  const fileSection = buildFileSection(order, skipped);
 
   return `
     <div style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;color:#1a1a2e">
@@ -485,6 +531,7 @@ function buildAdminEmail(order) {
       <div style="background:#fff;padding:28px;border:1px solid #e5e7eb;border-top:none">
         ${buildShippingBanner(order, false)}
         ${buildDeliverByBanner(order)}
+        ${buildNotAttachedBanner(order, skipped)}
 
         <div style="margin-bottom:16px;padding:10px 14px;border-radius:6px;font-size:13px;${order.terms_accepted_at ? 'background:#f0fdf4;color:#15803d' : 'background:#fef2f2;color:#b91c1c'}">
           ${order.terms_accepted_at

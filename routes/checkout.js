@@ -244,7 +244,7 @@ async function sendOrderEmails(order) {
         from: 'SpeedyBanner Orders <orders@speedybanner.com>',
         to: notifyTo,
         subject: `${subjectPrefix(order)}🖨️ NEW ORDER ${orderRef(order)} — [${order.site || 'SpeedyBanner'}] — FREE (coupon) — ${order.customer_email}`,
-        html: buildAdminEmail(order),
+        html: buildAdminEmail(order, attachments.skipped),
         attachments,
       });
       if (error) throw error;

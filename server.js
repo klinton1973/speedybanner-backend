@@ -21,6 +21,7 @@ app.use('/checkout', require('./routes/square'));       // Square checkout (iner
 app.use('/webhook/square', require('./routes/square-webhook'));
 app.use('/webhook',  require('./routes/webhook'));
 app.use('/admin',    require('./routes/admin'));
+app.use('/quote',    require('./routes/quote'));         // contact-page custom quote requests
 const trackingRouter = require('./routes/tracking');
 app.use('/tracking', trackingRouter);
 // Background workers email real customers. Never start them in local test mode, so a test

@@ -18,6 +18,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use('/upload',   require('./routes/upload'));
 app.use('/checkout', require('./routes/checkout'));
 app.use('/checkout', require('./routes/square'));       // Square checkout (inert until SQUARE_* env vars are set)
+app.use('/checkout', require('./routes/started'));      // checkout opened / email typed (feeds the abandoned-checkout reminder)
 app.use('/webhook/square', require('./routes/square-webhook'));
 app.use('/webhook',  require('./routes/webhook'));
 app.use('/admin',    require('./routes/admin'));

@@ -4,7 +4,10 @@
 // customer pays (see routes/checkout.js). When Stripe never confirms the payment the
 // row stays pending with paid_at null — that is an abandoned checkout, and it already
 // carries the customer's email, the cart and the site. This worker emails each of
-// those customers one short reminder, once, about an hour after they walked away.
+// those customers one short reminder, once, about 90 minutes after they walked away.
+//
+// Rows with status 'started' (routes/started.js) are the same thing one step earlier: the
+// customer typed an email address at checkout but never pressed Place Order.
 //
 // Rules:
 //   - one reminder per email address per 7 days, even if they abandoned several times
@@ -24,7 +27,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 const CHECK_EVERY_MS  = 15 * 60 * 1000;      // how often to look
-const MIN_AGE_MS      = 60 * 60 * 1000;      // give Stripe / the customer an hour first
+const MIN_AGE_MS      = 90 * 60 * 1000;      // 90 minutes: the customer's choice, long enough not to nag someone mid-checkout
 const MAX_AGE_MS      = 48 * 60 * 60 * 1000; // older than this is stale, not a lead
 const REPEAT_GUARD_MS = 7 * 24 * 60 * 60 * 1000;
 const BATCH = 25;
@@ -96,14 +99,14 @@ function subjectFor(order) {
   return first ? `Still need your ${first.name}? — ${site}` : `Your order at ${site} was not completed`;
 }
 
-// Picks the rows to remind: pending, unpaid, 1h–48h old, not yet handled, newest
+// Picks the rows to remind: pending or started, unpaid, 90min–48h old, not yet handled, newest
 // per email address first so the duplicate check below keeps the latest cart.
 async function fetchCandidates(now) {
   const { data, error } = await supabase
     .from('orders')
     .select('id, customer_email, items, amount_cents, site, created_at')
     .is('paid_at', null)
-    .eq('status', 'pending')
+    .in('status', ['pending', 'started']) // 'started' = email typed at checkout, Place Order never pressed (routes/started.js)
     .is('abandoned_email_sent_at', null)
     .lt('created_at', new Date(now - MIN_AGE_MS).toISOString())
     .gt('created_at', new Date(now - MAX_AGE_MS).toISOString())

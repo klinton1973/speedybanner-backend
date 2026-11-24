@@ -359,9 +359,16 @@ function etDate(iso) {
   const d = iso ? new Date(iso) : new Date();
   return new Date(d.toLocaleString('en-US', { timeZone: 'America/New_York' }));
 }
+// Days with no vendor production / FedEx Overnight delivery. Keep in step with VENDOR_HOLIDAYS
+// in the lexingtonsign storefront app.js.
+const SHIP_HOLIDAYS = new Set(['2026-11-26', '2026-12-25', '2027-01-01', '2027-05-31', '2027-07-05', '2027-09-06', '2027-11-25', '2027-12-24']);
+function isBusinessDay(x) {
+  const key = `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+  return x.getDay() !== 0 && x.getDay() !== 6 && !SHIP_HOLIDAYS.has(key);
+}
 function addBusinessDays(d, n) {
   const x = new Date(d);
-  while (n > 0) { x.setDate(x.getDate() + 1); if (x.getDay() !== 0 && x.getDay() !== 6) n--; }
+  while (n > 0) { x.setDate(x.getDate() + 1); if (isBusinessDay(x)) n--; }
   return x;
 }
 function deliverySchedule(orderedAt, shipDays) {
@@ -390,6 +397,19 @@ function buildDeliverByBanner(order) {
   if (!rows.length) return '';
   const lines = rows.map(r => `<div style="margin-top:6px"><span style="font-size:16px;font-weight:800;color:#1e3a8a">📅 DELIVER BY ${fmtDay(r.deliver).toUpperCase()}</span> — ${escapeHtml(r.name)}<div style="color:#1e40af;font-size:13px">Vendor item (B2Sign): must ship out by ${fmtDay(r.ship)} for FedEx Overnight delivery ${fmtDay(r.deliver)}. Customer was shown these dates.</div></div>`);
   return `<div style="background:#dbeafe;border:3px solid #3b82f6;border-radius:8px;padding:12px 18px;margin-bottom:20px">${lines.join('')}</div>`;
+}
+
+// Customer copy: made-to-order (vendor) items ship two business days out, not the next day.
+function buildCustomerVendorNote(order) {
+  const rows = vendorDeliverBy(order);
+  if (!rows.length) return '';
+  const lines = rows.map(r => `<div style="margin-top:4px"><strong>${escapeHtml(r.name)}</strong> is made to order: ships by ${fmtDay(r.ship)}, estimated delivery <strong>${fmtDay(r.deliver)}</strong> (FedEx Overnight).</div>`);
+  return `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:12px 16px;margin-bottom:24px;font-size:14px;color:#1e3a8a">📦 <strong>Delivery date</strong>${lines.join('')}</div>`;
+}
+// True when every priced line on the order is a vendor-made item.
+function allVendorItems(order) {
+  const priced = (order.items || []).filter(i => Number(i.totalPrice || i.price || 0) > 0);
+  return priced.length > 0 && priced.every(i => leadDaysFor(i) > 1);
 }
 
 function formatDetails(details) {
@@ -423,6 +443,7 @@ function buildCustomerEmail(order) {
     </tr>`)
     .join('');
   const flags = shippingFlags(order);
+  const vendorOnly = allVendorItems(order);
 
   return `
     <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#1a1a2e">
@@ -432,15 +453,16 @@ function buildCustomerEmail(order) {
       </div>
       <div style="background:#fff;padding:32px;border:1px solid #e5e7eb;border-top:none">
         <h2 style="color:#15803d;margin:0 0 8px">✅ Your order is confirmed!</h2>
-        <p style="color:#374151;margin:0 0 24px">Thanks for your order. We'll start printing right away and ship overnight via FedEx.</p>
+        <p style="color:#374151;margin:0 0 24px">${vendorOnly ? 'Thanks for your order. Your item is made to order: it ships within 2 business days, then overnight via FedEx.' : "Thanks for your order. We'll start printing right away and ship overnight via FedEx."}</p>
         <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:12px 16px;margin:0 0 24px;font-size:13px;color:#78350f">
           <strong>Please inspect your order when it arrives.</strong> Any printing error or shipping damage must be reported within <strong>48 hours of delivery</strong> &mdash; just reply to this email with photos and we'll make it right.
         </div>
 
         <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:14px 18px;margin-bottom:24px">
-          <strong>Order ${orderRef(order)}</strong> &nbsp;·&nbsp; Paid $${(order.amount_cents / 100).toFixed(2)} &nbsp;·&nbsp; ${flags.rush ? 'Ships today' : 'Ships next business day'}${flags.saturday ? ' &nbsp;·&nbsp; Saturday delivery' : ''}
+          <strong>Order ${orderRef(order)}</strong> &nbsp;·&nbsp; Paid $${(order.amount_cents / 100).toFixed(2)} &nbsp;·&nbsp; ${vendorOnly ? 'Ships in 2 business days' : (flags.rush ? 'Ships today' : 'Ships next business day')}${flags.saturday ? ' &nbsp;·&nbsp; Saturday delivery' : ''}
         </div>
         ${buildShippingBanner(order, true)}
+        ${buildCustomerVendorNote(order)}
 
         <h3 style="color:#1a3fa8;margin:0 0 12px;font-size:15px;border-bottom:2px solid #e5e7eb;padding-bottom:6px">📦 What You Ordered</h3>
         <table style="width:100%;border-collapse:collapse;margin-bottom:24px;font-size:14px">

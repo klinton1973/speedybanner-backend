@@ -19,6 +19,14 @@ test('a signed token verifies and gives back the order id', () => {
   assert.equal(verify(sign(1234)), '1234');
 });
 
+test('UUID order ids (what the live database uses) sign and verify', () => {
+  const id = 'b3a5a0b3-953e-4be5-a398-f9551cfe0cb0';
+  const t = sign(id);
+  assert.equal(verify(t), id);
+  assert.ok(t.length <= 80, 'token must fit the storefront pattern');
+  assert.equal(verify('c3a5a0b3-953e-4be5-a398-f9551cfe0cb0.' + t.split('.')[1]), null);
+});
+
 test('tampered, re-targeted and junk tokens are refused', () => {
   const t = sign(1234);
   const mac = t.split('.')[1];

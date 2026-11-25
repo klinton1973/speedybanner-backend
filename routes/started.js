@@ -9,6 +9,8 @@
 //   POST /checkout/started   the customer has typed a valid email address. Saves the cart as an
 //                            `orders` row with status 'started' so the abandoned-checkout worker
 //                            (routes/abandoned.js) can send its one reminder if they never pay.
+//   GET  /checkout/restore   trades the signed token from the reminder's button for the saved
+//                            cart lines, so the page can refill the cart (lib/restore.js).
 //
 // Both are fire-and-forget from the page: they always answer quickly, never block checkout,
 // and a failure here must never be visible to the customer.
@@ -18,6 +20,7 @@
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { siteNameFromOrigin, allowedOrigins } = require('../sites');
+const { verify, restorableItems } = require('../lib/restore');
 
 const router = express.Router();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
@@ -48,15 +51,27 @@ function validEmail(s) {
   return typeof s === 'string' && s.length <= 254 && /^[^\s@<>"',;]+@[^\s@<>"',;]+\.[a-z]{2,}$/i.test(s);
 }
 
-// Keeps only what the reminder email shows, with sane limits.
+// Keeps what the reminder email shows and what a cart needs to be rebuilt, with sane limits.
+// `fileKey` is always written (null when the line has no print file): its presence is what
+// marks the row as restorable (lib/restore.js).
 function cleanItems(items) {
   if (!Array.isArray(items)) return [];
   return items.slice(0, MAX_ITEMS).map(i => {
     const price = Number(i && i.totalPrice);
+    const total = Number.isFinite(price) && price >= 0 && price < 100000 ? Math.round(price * 100) / 100 : 0;
+    const unit = Number(i && i.unitPrice);
+    const qty = Math.round(Number(i && i.qty));
+    const fileKey = i && typeof i.fileKey === 'string' && /^[\w./-]{1,300}$/.test(i.fileKey) && !i.fileKey.includes('..') ? i.fileKey : null;
+    const thumbUrl = i && typeof i.thumbUrl === 'string' && /^https:\/\/[^\s"'<>]{1,500}$/.test(i.thumbUrl) ? i.thumbUrl : null;
     return {
       name: String((i && i.name) || '').slice(0, 200),
       details: String((i && i.details) || '').slice(0, 600),
-      totalPrice: Number.isFinite(price) && price >= 0 && price < 100000 ? Math.round(price * 100) / 100 : 0,
+      totalPrice: total,
+      qty: Number.isFinite(qty) && qty >= 1 && qty <= 9999 ? qty : 1,
+      unitPrice: Number.isFinite(unit) && unit >= 0 && unit < 100000 ? Math.round(unit * 10000) / 10000 : total,
+      fileKey,
+      thumbUrl,
+      hasDesign: !!(i && (i.hasDesign || fileKey)),
     };
   }).filter(i => i.name);
 }
@@ -122,6 +137,36 @@ router.post('/started', async (req, res) => {
     await logEvent(site, 'email_entered', amount);
   } catch (err) {
     console.error('[started] started error:', err?.message || err);
+  }
+});
+
+// The reminder email's button lands on the storefront with ?restore=<token>. The page calls this
+// to get the cart lines back. Only our own storefronts may ask, only for a row that belongs to
+// the asking site, and only while the row is still unpaid and recent.
+const RESTORE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+router.get('/restore', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    if (!fromStorefront(req)) return res.status(404).json({ error: 'not found' });
+    if (!allow('r:' + clientIp(req), 40, 60 * 60 * 1000)) return res.status(429).json({ error: 'try again later' });
+    const id = verify(req.query.t);
+    if (!id) return res.status(404).json({ error: 'not found' });
+    const { data, error } = await supabase
+      .from('orders')
+      .select('id, items, status, site, created_at, paid_at')
+      .eq('id', id)
+      .limit(1);
+    if (error) throw error;
+    const row = data && data[0];
+    if (!row || row.paid_at || !['pending', 'started'].includes(row.status)) return res.status(404).json({ error: 'not found' });
+    if (row.site !== siteNameFromOrigin(req.headers.origin)) return res.status(404).json({ error: 'not found' });
+    if (Date.now() - new Date(row.created_at).getTime() > RESTORE_MAX_AGE_MS) return res.status(404).json({ error: 'not found' });
+    const items = restorableItems(row.items);
+    if (!items.length) return res.status(404).json({ error: 'not found' });
+    res.json({ items });
+  } catch (err) {
+    console.error('[started] restore error:', err?.message || err);
+    res.status(500).json({ error: 'unavailable' });
   }
 });
 

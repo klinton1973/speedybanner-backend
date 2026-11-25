@@ -4,7 +4,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test/square.test.js",
+    "test": "node --test test/square.test.js test/restore.test.js",
     "test:square": "node local-test.js"
   },
   "dependencies": {

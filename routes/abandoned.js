@@ -32,6 +32,8 @@ const MAX_AGE_MS      = 48 * 60 * 60 * 1000; // older than this is stale, not a 
 const REPEAT_GUARD_MS = 7 * 24 * 60 * 60 * 1000;
 const BATCH = 25;
 
+const { restoreUrl } = require('../lib/restore');
+
 function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -49,7 +51,7 @@ function buildAbandonedEmail(order) {
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700">$${Number(i.totalPrice || 0).toFixed(2)}</td>
     </tr>`).join('');
   const total = (Number(order.amount_cents) || 0) / 100;
-  const url = siteUrl(site);
+  const url = restoreUrl(site, order); // refills the cart on arrival when the saved lines allow it (lib/restore.js)
 
   return `
     <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#1a1a2e">
